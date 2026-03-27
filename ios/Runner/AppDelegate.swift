@@ -14,6 +14,8 @@ import UIKit
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     // Use iOS Vision OCR to avoid CocoaPods downloading MLKit language models
     // from dl.google.com (often blocked on mainland China networks).
-    VisionOcrPlugin.register(with: engineBridge.pluginRegistry.registrar(forPlugin: "VisionOcrPlugin"))
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "VisionOcrPlugin") {
+      VisionOcrPlugin.register(with: registrar)
+    }
   }
 }

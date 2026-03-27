@@ -1,11 +1,11 @@
 {
-    "name": "novel_reader",
-    "short_name": "novel_reader",
+    "name": "Lingfer",
+    "short_name": "Lingfer",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "语渡 Lingfer：支持 TXT、EPUB、PDF、DOCX 与拍照扫描的 AI 阅读应用。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

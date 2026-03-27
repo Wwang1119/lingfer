@@ -436,7 +436,7 @@ class ShelfTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'v1.2.2',
+                  'v1.2.3',
                   style: TextStyle(fontSize: 13, color: Color(0xFF6E6E73)),
                 ),
               ],
