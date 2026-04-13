@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
@@ -12,12 +13,14 @@ class LensBookCover extends StatelessWidget {
     super.key,
     required this.seedText,
     this.coverAssetPath,
+    this.coverFilePath,
     this.borderRadius = 18,
     this.enableShadow = true,
   });
 
   final String seedText;
   final String? coverAssetPath;
+  final String? coverFilePath;
   final double borderRadius;
   final bool enableShadow;
 
@@ -26,9 +29,17 @@ class LensBookCover extends StatelessWidget {
     final radius = BorderRadius.circular(borderRadius);
     final cover = ClipRRect(
       borderRadius: radius,
-      child: coverAssetPath == null
-          ? _Placeholder(seedText: seedText)
-          : Image.asset(
+      child: coverFilePath != null
+          ? Image.file(
+              File(coverFilePath!),
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return _Placeholder(seedText: seedText);
+              },
+            )
+          : coverAssetPath == null
+              ? _Placeholder(seedText: seedText)
+              : Image.asset(
               coverAssetPath!,
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) {

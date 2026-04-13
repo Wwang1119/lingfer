@@ -20,15 +20,21 @@ class BookShelfCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const cardRadius = 20.0;
+    final metaText = book.isScanDocument ? '${book.author} · 可继续追加页面' : book.author;
+    final backgroundColor =
+        book.isPinned ? const Color(0xFFFFFBF1) : CupertinoColors.white;
+    final borderColor =
+        book.isPinned ? const Color(0x22C89B3C) : const Color(0x11000000);
+
     return GestureDetector(
       onTap: onPressed,
       onLongPress: onLongPress,
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: CupertinoColors.white,
+          color: backgroundColor,
           borderRadius: BorderRadius.circular(cardRadius),
-          border: Border.all(color: const Color(0x11000000)),
+          border: Border.all(color: borderColor),
           boxShadow: const [
             BoxShadow(
               color: Color(0x12000000),
@@ -49,19 +55,57 @@ class BookShelfCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    book.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1C1C1E),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          book.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1C1C1E),
+                          ),
+                        ),
+                      ),
+                      if (book.isPinned) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF4E4B8),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                CupertinoIcons.pin_fill,
+                                size: 11,
+                                color: Color(0xFF8A6A12),
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                '置顶',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF8A6A12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    book.author,
+                    metaText,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -90,7 +134,7 @@ class BookShelfCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      if (progressTopChunk > 0)
+                      if (!book.isScanDocument && progressTopChunk > 0)
                         Text(
                           '进度：第 $progressTopChunk 段',
                           style: const TextStyle(
@@ -124,6 +168,7 @@ class _MiniCover extends StatelessWidget {
     return LensBookCover(
       seedText: book.title,
       coverAssetPath: book.coverAssetPath,
+      coverFilePath: book.coverFilePath ?? (book.isImage ? book.locator : null),
       borderRadius: 16,
       enableShadow: false,
     );

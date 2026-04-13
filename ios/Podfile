@@ -48,6 +48,7 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     # 强行给所有零件生成 dSYM 翻译字典
     target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.5'
       config.build_settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf-with-dsym'
     end
   end

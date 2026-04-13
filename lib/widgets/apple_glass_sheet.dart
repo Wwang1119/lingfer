@@ -45,6 +45,9 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
     color: Color(0xFF000000),
     fontFamily: '.SF UI Text',
   );
+  static const Color _panelBg = Color(0xFFF6F4EE);
+  static const Color _panelCard = Color(0xFFFFFCF8);
+  static const Color _panelBorder = Color(0x12000000);
 
   static const TextStyle _segmentLabelStyle = TextStyle(
     decoration: TextDecoration.none,
@@ -273,8 +276,8 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
           Expanded(
             child: CupertinoSlidingSegmentedControl<int>(
               groupValue: _segment,
-              thumbColor: CupertinoColors.white.withValues(alpha: 0.90),
-              backgroundColor: const Color(0x1F000000),
+              thumbColor: _panelCard,
+              backgroundColor: const Color(0x12000000),
               children: const {
                 _segmentTranslate: Padding(
                   padding: EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -340,8 +343,8 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: CupertinoSlidingSegmentedControl<VocabularyLevel>(
         groupValue: _level,
-        thumbColor: CupertinoColors.white.withValues(alpha: 0.90),
-        backgroundColor: const Color(0x1F000000),
+        thumbColor: _panelCard,
+        backgroundColor: const Color(0x12000000),
         children: {
           for (final entry in labels.entries)
             entry.key: Padding(
@@ -385,9 +388,9 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: CupertinoColors.white.withValues(alpha: 0.70),
+          color: _panelCard,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0x14000000)),
+          border: Border.all(color: _panelBorder),
           boxShadow: const [
             BoxShadow(
               color: Color(0x0F000000),
@@ -430,8 +433,8 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: CupertinoColors.white.withValues(alpha: 0.72),
-          border: Border.all(color: const Color(0x14000000)),
+          color: _panelCard,
+          border: Border.all(color: _panelBorder),
           boxShadow: const [
             BoxShadow(
               color: Color(0x12000000),
@@ -593,9 +596,9 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
                       filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          color: CupertinoColors.white.withValues(alpha: 0.82),
+                          color: _panelBg.withValues(alpha: 0.94),
                           borderRadius: borderRadius,
-                          border: Border.all(color: const Color(0x14000000)),
+                          border: Border.all(color: _panelBorder),
                         ),
                         child: SizedBox(
                           height: panelHeight,

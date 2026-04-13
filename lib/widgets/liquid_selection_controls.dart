@@ -6,14 +6,18 @@ class LiquidCupertinoTextSelectionControls extends CupertinoTextSelectionControl
   LiquidCupertinoTextSelectionControls();
 
   static const double _kKnobRadius = 8.5;
-  static const double _kBarHalfWidth = 2.4;
-  static const double _kOverlap = 1.5;
+  static const double _kBarHalfWidth = 2.35;
+  static const double _kOverlap = 1.1;
+  static const double _kHorizontalHitPadding = 16;
+  static const double _kVerticalHitPadding = 12;
 
   @override
   Size getHandleSize(double textLineHeight) {
-    final h = textLineHeight + _kKnobRadius * 2 - _kOverlap;
-    // Wider handle => larger gesture hitbox (easier to drag precisely).
-    return Size(_kKnobRadius * 2 + 6, h);
+    final visibleHeight = textLineHeight + _kKnobRadius * 2 - _kOverlap;
+    return Size(
+      _kKnobRadius * 2 + _kHorizontalHitPadding * 2,
+      visibleHeight + _kVerticalHitPadding * 2,
+    );
   }
 
   @override
@@ -25,10 +29,20 @@ class LiquidCupertinoTextSelectionControls extends CupertinoTextSelectionControl
   ]) {
     final desiredSize = getHandleSize(textLineHeight);
     final baseColor = CupertinoTheme.of(context).selectionHandleColor;
-    final handle = SizedBox.fromSize(
-      size: desiredSize,
+    final visibleSize = Size(
+      _kKnobRadius * 2 + 2,
+      textLineHeight + _kKnobRadius * 2 - _kOverlap,
+    );
+    final paintedHandle = SizedBox.fromSize(
+      size: visibleSize,
       child: CustomPaint(
         painter: _LiquidHandlePainter(baseColor),
+      ),
+    );
+    final handle = SizedBox.fromSize(
+      size: desiredSize,
+      child: Center(
+        child: paintedHandle,
       ),
     );
 
@@ -52,13 +66,21 @@ class LiquidCupertinoTextSelectionControls extends CupertinoTextSelectionControl
   @override
   Offset getHandleAnchor(TextSelectionHandleType type, double textLineHeight) {
     final handleSize = getHandleSize(textLineHeight);
+    final visibleHeight = textLineHeight + _kKnobRadius * 2 - _kOverlap;
+    final topInset = (handleSize.height - visibleHeight) / 2;
     switch (type) {
       case TextSelectionHandleType.left:
-        return Offset(handleSize.width / 2, handleSize.height);
+        return Offset(handleSize.width / 2, topInset + visibleHeight);
       case TextSelectionHandleType.right:
-        return Offset(handleSize.width / 2, handleSize.height - 2 * _kKnobRadius + _kOverlap);
+        return Offset(
+          handleSize.width / 2,
+          topInset + textLineHeight,
+        );
       case TextSelectionHandleType.collapsed:
-        return Offset(handleSize.width / 2, textLineHeight + (handleSize.height - textLineHeight) / 2);
+        return Offset(
+          handleSize.width / 2,
+          textLineHeight + (handleSize.height - textLineHeight) / 2,
+        );
     }
   }
 }
@@ -90,9 +112,9 @@ class _LiquidHandlePainter extends CustomPainter {
       ..addRRect(bar);
 
     // A tiny shadow makes it feel like "liquid glass" floating above text.
-    canvas.drawShadow(path, const Color(0x33000000), 2.2, true);
+    canvas.drawShadow(path, const Color(0x24000000), 2.6, true);
 
-    final paint = Paint()..color = color.withValues(alpha: 0.86);
+    final paint = Paint()..color = color.withValues(alpha: 0.92);
     canvas.drawPath(path, paint);
   }
 

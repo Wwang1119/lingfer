@@ -20,6 +20,7 @@ import '../../models/vocabulary_level.dart';
 import '../../services/ai_translation_service.dart';
 import '../../services/book_text_service.dart';
 import '../../widgets/apple_glass_sheet.dart';
+import '../../widgets/liquid_selection_controls.dart';
 import '../../widgets/reading_text.dart';
 import '../../utils/level_color.dart';
 
@@ -1774,9 +1775,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
           DecoratedBox(
                 decoration: BoxDecoration(color: bg),
             child: material.SelectionArea(
-              // Use native Cupertino selection controls so TXT/EPUB and
-              // PDF selection handles feel consistent on iOS.
-              selectionControls: cupertinoTextSelectionControls,
+              selectionControls: liquidCupertinoTextSelectionControls,
               contextMenuBuilder: _buildSelectionContextMenu,
               onSelectionChanged: _onSelectionChanged,
               child: Listener(

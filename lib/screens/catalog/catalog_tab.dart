@@ -20,11 +20,13 @@ class CatalogTab extends StatelessWidget {
           'title': '我这一辈子',
           'author': '老舍',
           'assetPath': 'assets/books/wo_zhe_yi_bei_zi.epub',
+          'coverAssetPath': 'assets/covers/wo_zhe_yi_bei_zi.jpg',
         },
         {
           'title': '茶馆',
           'author': '老舍',
           'assetPath': 'assets/books/cha_guan.epub',
+          'coverAssetPath': 'assets/covers/cha_guan.jpg',
         },
       ],
     },
@@ -33,7 +35,7 @@ class CatalogTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    const pageBg = Color(0xFFF2F2F7);
+    const pageBg = Color(0xFFF6F4EE);
 
     return material.Scaffold(
       backgroundColor: pageBg,
@@ -51,15 +53,97 @@ class CatalogTab extends StatelessWidget {
                     bottom: false,
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                      child: const Text(
-                        '探索',
-                        style: TextStyle(
-                          fontSize: 34,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.8,
-                          color: Color(0xFF1C1C1E),
-                          decoration: TextDecoration.none,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '探索',
+                            style: TextStyle(
+                              fontSize: 34,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.8,
+                              color: Color(0xFF1C1C1E),
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFCF6),
+                              borderRadius: BorderRadius.circular(26),
+                              border: Border.all(color: const Color(0x10000000)),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x12000000),
+                                  blurRadius: 28,
+                                  offset: Offset(0, 18),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  '像 Apple Books 一样开始今天的阅读',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF1C1C1E),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  '从经典文本开始，加入书架后可直接进入语境翻译与精读模式。',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.45,
+                                    color: Color(0xFF6E6E73),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: const [
+                                    SizedBox(
+                                      width: 54,
+                                      height: 78,
+                                      child: LensBookCover(
+                                        seedText: '我这一辈子',
+                                        coverAssetPath:
+                                            'assets/covers/wo_zhe_yi_bei_zi.jpg',
+                                        borderRadius: 16,
+                                      ),
+                                    ),
+                                    SizedBox(width: 12),
+                                    SizedBox(
+                                      width: 54,
+                                      height: 78,
+                                      child: LensBookCover(
+                                        seedText: '茶馆',
+                                        coverAssetPath: 'assets/covers/cha_guan.jpg',
+                                        borderRadius: 16,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+                    child: Text(
+                      '已加入书架 ${state.shelf.length} 本',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF8E8E93),
+                        decoration: TextDecoration.none,
                       ),
                     ),
                   ),
@@ -155,14 +239,28 @@ class _ExploreSection extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.4,
-                color: Color(0xFF1C1C1E),
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                    color: Color(0xFF1C1C1E),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${books.length} 本公版精选',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF8E8E93),
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+              ],
             ),
           ),
           SizedBox(
@@ -177,6 +275,7 @@ class _ExploreSection extends StatelessWidget {
                 if (item is! Map) return const SizedBox.shrink();
                 final t = item['title'];
                 final a = item['author'];
+                final c = item['coverAssetPath'];
                 if (t is! String || a is! String) {
                   return const SizedBox.shrink();
                 }
@@ -187,6 +286,7 @@ class _ExploreSection extends StatelessWidget {
                   child: _ExploreBookCard(
                     title: t,
                     author: a,
+                    coverAssetPath: c is String ? c : null,
                     onPressed: () => onBookPressed(item),
                   ),
                 );
@@ -203,11 +303,13 @@ class _ExploreBookCard extends StatelessWidget {
   const _ExploreBookCard({
     required this.title,
     required this.author,
+    required this.coverAssetPath,
     required this.onPressed,
   });
 
   final String title;
   final String author;
+  final String? coverAssetPath;
   final VoidCallback onPressed;
 
   @override
@@ -238,7 +340,7 @@ class _ExploreBookCard extends StatelessWidget {
                   aspectRatio: 0.70,
                   child: LensBookCover(
                     seedText: title,
-                    coverAssetPath: null,
+                    coverAssetPath: coverAssetPath,
                     borderRadius: coverRadius,
                     enableShadow: false,
                   ),

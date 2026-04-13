@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/book.dart';
+import 'scan_book_store.dart';
 
 class BookStorageCleaner {
   static int _fnv1a32(String input) {
@@ -101,5 +102,33 @@ class BookStorageCleaner {
   static Future<void> deepClean(Book book) async {
     await deletePrefs(book);
     await deleteCaches(book);
+    await deleteImportedFile(book);
+  }
+
+  static Future<void> deleteImportedFile(Book book) async {
+    if (book.isScanDocument) {
+      try {
+        await ScanBookStore.delete(book.locator);
+      } catch (error, stackTrace) {
+        debugPrint('[clean] scan document delete error=$error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+      return;
+    }
+    if (book.source != BookSource.localFile) return;
+    try {
+      final support = await getApplicationSupportDirectory();
+      final importPrefix =
+          '${support.path}${Platform.pathSeparator}Lingfer${Platform.pathSeparator}ImportedBooks${Platform.pathSeparator}';
+      final file = File(book.locator);
+      final absolute = file.absolute.path;
+      if (!absolute.startsWith(importPrefix)) return;
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('[clean] imported file delete error=$error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 }

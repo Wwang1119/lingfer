@@ -1,6 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' as material;
+import 'package:flutter/services.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'package:image_picker/image_picker.dart';
@@ -11,13 +12,27 @@ import '../../models/book.dart';
 import '../../models/vocabulary_level.dart';
 import '../../services/imported_file_store.dart';
 import '../../services/book_storage_cleaner.dart';
+import '../../services/scan_book_store.dart';
 import '../reading/pdf_reader_page.dart';
 import '../reading/reading_screen.dart';
 import '../scan/scan_reader_page.dart';
 import '../../widgets/book_shelf_card.dart';
 import '../../widgets/level_action_sheet.dart';
+import '../../widgets/scan_import_sort_page.dart';
 
 enum _AddMenuAction { file, photo, camera }
+
+const _supportedImportExtensions = <String>[
+  'txt',
+  'epub',
+  'docx',
+  'pdf',
+  'png',
+  'jpg',
+  'jpeg',
+  'heic',
+  'webp',
+];
 
 class ShelfTab extends StatelessWidget {
   const ShelfTab({super.key});
@@ -25,7 +40,8 @@ class ShelfTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    const pageBg = Color(0xFFF2F2F7);
+    const pageBg = Color(0xFFF6F4EE);
+    final scanCount = state.shelf.where((book) => book.isScanDocument).length;
 
     // Critical: keep a Material + Scaffold context to avoid any debug baseline
     // underlines and ensure consistent text rendering across platforms.
@@ -69,9 +85,7 @@ class ShelfTab extends StatelessWidget {
                                 padding:
                                     const EdgeInsets.symmetric(horizontal: 6),
                                 decoration: BoxDecoration(
-                                  color: CupertinoColors.white.withValues(
-                                    alpha: 0.82,
-                                  ),
+                                  color: const Color(0xFFFFFCF6),
                                   borderRadius: BorderRadius.circular(999),
                                   border: Border.all(
                                     color: const Color(0x1A000000),
@@ -118,6 +132,42 @@ class ShelfTab extends StatelessWidget {
                     ),
                   ),
                 ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFCF6),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: const Color(0x10000000)),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x12000000),
+                            blurRadius: 26,
+                            offset: Offset(0, 16),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _ShelfStat(
+                              label: '当前书架',
+                              value: '${state.shelf.length} 本',
+                            ),
+                          ),
+                          Expanded(
+                            child: _ShelfStat(
+                              label: '扫描文稿',
+                              value: '$scanCount 本',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
                   sliver: state.shelf.isEmpty
@@ -126,14 +176,14 @@ class ShelfTab extends StatelessWidget {
                           itemBuilder: (context, index) {
                             final book = state.shelf[index];
                             final progress = state.progressTopChunk(book);
-                            return BookShelfCard(
+                            return _ShelfSwipeRow(
                               book: book,
-                              progressTopChunk: progress,
-                              onPressed: () => _openBook(context, state, book),
-                              onLongPress: () => _showDeleteSheet(
-                                context,
-                                state,
-                                book,
+                              onDelete: () => _deleteBook(state, book),
+                              onTogglePinned: () => state.togglePinned(book),
+                              child: BookShelfCard(
+                                book: book,
+                                progressTopChunk: progress,
+                                onPressed: () => _openBook(context, state, book),
                               ),
                             );
                           },
@@ -154,7 +204,7 @@ class ShelfTab extends StatelessWidget {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const ['txt', 'epub', 'docx', 'pdf'],
+        allowedExtensions: _supportedImportExtensions,
         allowMultiple: false,
       );
       final picked =
@@ -163,10 +213,18 @@ class ShelfTab extends StatelessWidget {
       if (path == null || path.isEmpty) return;
 
       final lower = path.toLowerCase();
-      if (!lower.endsWith('.txt') &&
-          !lower.endsWith('.epub') &&
-          !lower.endsWith('.docx') &&
-          !lower.endsWith('.pdf')) {
+      if (!_isSupportedImportPath(lower)) {
+        return;
+      }
+
+      if (_isImagePath(lower)) {
+        if (!context.mounted) return;
+        await _importScanImages(
+          context,
+          state,
+          originalPaths: <String>[path],
+          author: '文件图片',
+        );
         return;
       }
 
@@ -178,18 +236,11 @@ class ShelfTab extends StatelessWidget {
       );
       if (level == null) return;
 
-      final originalName = path.split(Platform.pathSeparator).last;
-      final title = originalName.replaceAll(
-        RegExp(r'\.(txt|epub|docx|pdf)$', caseSensitive: false),
-        '',
-      );
       final storedPath = await ImportedFileStore.ingest(path);
-      final book = Book(
-        title: title.isEmpty ? originalName : title,
-        author: '本地导入',
-        defaultLevel: level,
-        source: BookSource.localFile,
-        locator: storedPath,
+      final book = _buildImportedBook(
+        originalPath: path,
+        storedPath: storedPath,
+        level: level,
       );
       await state.addToShelf(book);
       if (!context.mounted) return;
@@ -262,16 +313,19 @@ class ShelfTab extends StatelessWidget {
     switch (action) {
       case _AddMenuAction.file:
         await _importLocal(pageContext, state);
+        return;
       case _AddMenuAction.photo:
-        await _scanFromGallery(pageContext);
+        await _scanFromGallery(pageContext, state);
+        return;
       case _AddMenuAction.camera:
-        await _scanFromCamera(pageContext);
+        await _scanFromCamera(pageContext, state);
+        return;
       case null:
         return;
     }
   }
 
-  Future<void> _scanFromCamera(BuildContext context) async {
+  Future<void> _scanFromCamera(BuildContext context, AppState state) async {
     // Camera capture is not available on macOS.
     if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
       await _showInfoDialog(context, '当前平台不支持拍照扫描');
@@ -280,6 +334,11 @@ class ShelfTab extends StatelessWidget {
 
     try {
       final picker = ImagePicker();
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
       final photo = await picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 92,
@@ -287,30 +346,174 @@ class ShelfTab extends StatelessWidget {
       final path = photo?.path;
       if (path == null || path.isEmpty) return;
       if (!context.mounted) return;
-      Navigator.of(context, rootNavigator: true).push(
-        CupertinoPageRoute<void>(
-          builder: (_) => ScanReaderPage(imagePath: path),
-        ),
+      await _importScanImages(
+        context,
+        state,
+        originalPaths: <String>[path],
+        author: '拍照扫描',
+      );
+    } catch (_) {
+    } finally {
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
+  }
+
+  Future<void> _scanFromGallery(BuildContext context, AppState state) async {
+    try {
+      final picker = ImagePicker();
+      final photos = await picker.pickMultiImage(imageQuality: 92);
+      final paths = photos
+          .map((photo) => photo.path)
+          .where((path) => path.trim().isNotEmpty)
+          .toList(growable: false);
+      if (paths.isEmpty) return;
+      if (!context.mounted) return;
+      await _importScanImages(
+        context,
+        state,
+        originalPaths: paths,
+        author: '照片导入',
       );
     } catch (_) {}
   }
 
-  Future<void> _scanFromGallery(BuildContext context) async {
-    try {
-      final picker = ImagePicker();
-      final photo = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 92,
-      );
-      final path = photo?.path;
-      if (path == null || path.isEmpty) return;
-      if (!context.mounted) return;
-      Navigator.of(context, rootNavigator: true).push(
-        CupertinoPageRoute<void>(
-          builder: (_) => ScanReaderPage(imagePath: path),
+  Future<void> _importScanImages(
+    BuildContext context,
+    AppState state, {
+    required List<String> originalPaths,
+    required String author,
+  }) async {
+    var paths = originalPaths
+        .where((path) => path.trim().isNotEmpty)
+        .toList(growable: false);
+    if (paths.isEmpty) return;
+
+    if (paths.length > 1) {
+      final ordered = await Navigator.of(context, rootNavigator: true).push<List<String>>(
+        CupertinoPageRoute<List<String>>(
+          builder: (_) => ScanImportSortPage(
+            paths: paths,
+            title: '调整扫描顺序',
+          ),
         ),
       );
-    } catch (_) {}
+      if (!context.mounted) return;
+      if (ordered == null || ordered.isEmpty) return;
+      paths = ordered;
+    }
+
+    final level = await showVocabularyLevelActionSheet(
+      context,
+      selected: VocabularyLevel.cet4,
+      message: '选择这张图片的目标词汇难度。导入后会出现在书架中，可反复点开继续长按识别。',
+    );
+    if (!context.mounted) return;
+    if (level == null) return;
+
+    final defaultTitle = ScanBookStore.defaultTitle();
+    final title = await _promptScanTitle(
+      context,
+      initialValue: defaultTitle,
+    );
+    if (!context.mounted) return;
+    if (title == null) return;
+
+    final doc = await ScanBookStore.createFromImages(
+      title: title,
+      imagePaths: paths,
+    );
+    final book = doc.toBook(level);
+
+    await state.addToShelf(book);
+    if (!context.mounted) return;
+    _openBook(context, state, book, initialScanPageIndex: 0);
+  }
+
+  Future<String?> _promptScanTitle(
+    BuildContext context, {
+    required String initialValue,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    final value = await showCupertinoDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return CupertinoAlertDialog(
+          title: const Text('命名扫描册'),
+          content: Column(
+            children: [
+              const SizedBox(height: 10),
+              CupertinoTextField(
+                controller: controller,
+                autofocus: true,
+                placeholder: '输入书名或章节名',
+                clearButtonMode: OverlayVisibilityMode.editing,
+              ),
+            ],
+          ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
+            ),
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return trimmed;
+  }
+
+  Book _buildImportedBook({
+    required String originalPath,
+    required String storedPath,
+    required VocabularyLevel level,
+    String? forcedAuthor,
+  }) {
+    final originalName = originalPath.split(Platform.pathSeparator).last;
+    final title = originalName.replaceAll(
+      RegExp(
+        r'\.(txt|epub|docx|pdf|png|jpg|jpeg|heic|webp)$',
+        caseSensitive: false,
+      ),
+      '',
+    );
+    final lower = originalPath.toLowerCase();
+    final author = forcedAuthor ??
+        (_isImagePath(lower) ? '图片导入' : '本地导入');
+    return Book(
+      title: title.isEmpty ? originalName : title,
+      author: author,
+      defaultLevel: level,
+      source: BookSource.localFile,
+      locator: storedPath,
+    );
+  }
+
+  bool _isSupportedImportPath(String lowerPath) {
+    return lowerPath.endsWith('.txt') ||
+        lowerPath.endsWith('.epub') ||
+        lowerPath.endsWith('.docx') ||
+        lowerPath.endsWith('.pdf') ||
+        _isImagePath(lowerPath);
+  }
+
+  bool _isImagePath(String lowerPath) {
+    return lowerPath.endsWith('.png') ||
+        lowerPath.endsWith('.jpg') ||
+        lowerPath.endsWith('.jpeg') ||
+        lowerPath.endsWith('.heic') ||
+        lowerPath.endsWith('.webp');
   }
 
   Future<void> _showInfoDialog(BuildContext context, String message) async {
@@ -335,10 +538,17 @@ class ShelfTab extends StatelessWidget {
     );
   }
 
-  void _openBook(BuildContext context, AppState state, Book book) {
+  void _openBook(
+    BuildContext context,
+    AppState state,
+    Book book, {
+    int initialScanPageIndex = 0,
+  }) {
     () async {
       var openBook = book;
-      if (book.source == BookSource.localFile) {
+      if (book.source == BookSource.localFile &&
+          !book.isScanDocument &&
+          !book.isImage) {
         final ingested = await ImportedFileStore.ingest(book.locator);
         if (ingested != book.locator) {
           openBook = Book(
@@ -347,15 +557,43 @@ class ShelfTab extends StatelessWidget {
             defaultLevel: book.defaultLevel,
             source: book.source,
             locator: ingested,
+            isPinned: book.isPinned,
             coverAssetPath: book.coverAssetPath,
+            coverFilePath: book.coverFilePath,
             blurb: book.blurb,
           );
           await state.addToShelf(openBook);
         }
       }
       if (!context.mounted) return;
-      final lower = openBook.locator.toLowerCase();
-      if (lower.endsWith('.pdf')) {
+      if (openBook.isScanDocument) {
+        Navigator.of(context, rootNavigator: true).push(
+          CupertinoPageRoute<void>(
+            builder: (_) => ScanReaderPage(
+              scanDocumentPath: openBook.locator,
+              initialLevel: openBook.defaultLevel,
+              bookTitle: openBook.title,
+              sourceLabel: openBook.author,
+              initialPageIndex: initialScanPageIndex,
+            ),
+          ),
+        );
+        return;
+      }
+      if (openBook.isImage) {
+        Navigator.of(context, rootNavigator: true).push(
+          CupertinoPageRoute<void>(
+            builder: (_) => ScanReaderPage(
+              imagePath: openBook.locator,
+              initialLevel: openBook.defaultLevel,
+              bookTitle: openBook.title,
+              sourceLabel: openBook.author,
+            ),
+          ),
+        );
+        return;
+      }
+      if (openBook.isPdf) {
         Navigator.of(context, rootNavigator: true).push(
           CupertinoPageRoute<void>(
             builder: (_) => PdfReaderPage(book: openBook),
@@ -371,37 +609,11 @@ class ShelfTab extends StatelessWidget {
     }();
   }
 
-  Future<void> _showDeleteSheet(
-    BuildContext context,
-    AppState state,
-    Book book,
-  ) async {
-    await showCupertinoModalPopup<void>(
-      context: context,
-      builder: (ctx) {
-        return CupertinoActionSheet(
-          title: Text(book.title),
-          message: const Text('将从书架移除，并清理该书的翻译缓存与阅读进度。'),
-          actions: [
-            CupertinoActionSheetAction(
-              isDestructiveAction: true,
-              onPressed: () async {
-                Navigator.of(ctx).pop();
-                try {
-                  await state.removeFromShelf(book);
-                  await BookStorageCleaner.deepClean(book);
-                } catch (_) {}
-              },
-              child: const Text('删除本书'),
-            ),
-          ],
-          cancelButton: CupertinoActionSheetAction(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-        );
-      },
-    );
+  Future<void> _deleteBook(AppState state, Book book) async {
+    try {
+      await state.removeFromShelf(book);
+      await BookStorageCleaner.deepClean(book);
+    } catch (_) {}
   }
 
   Future<void> _showAboutDialog(BuildContext context) async {
@@ -436,7 +648,7 @@ class ShelfTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'v1.2.3',
+                  'v1.2.9',
                   style: TextStyle(fontSize: 13, color: Color(0xFF6E6E73)),
                 ),
               ],
@@ -529,6 +741,190 @@ class _AddPopoverMenu extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShelfStat extends StatelessWidget {
+  const _ShelfStat({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF1C1C1E),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Color(0xFF8E8E93),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ShelfSwipeRow extends StatefulWidget {
+  const _ShelfSwipeRow({
+    required this.book,
+    required this.child,
+    required this.onDelete,
+    required this.onTogglePinned,
+  });
+
+  final Book book;
+  final Widget child;
+  final Future<void> Function() onDelete;
+  final Future<void> Function() onTogglePinned;
+
+  @override
+  State<_ShelfSwipeRow> createState() => _ShelfSwipeRowState();
+}
+
+class _ShelfSwipeRowState extends State<_ShelfSwipeRow> {
+  static const double _actionWidth = 88;
+  static const double _maxReveal = _actionWidth * 2 + 8;
+
+  double _offset = 0;
+
+  void _setOpen(bool open) {
+    setState(() => _offset = open ? -_maxReveal : 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 106,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _ShelfActionButton(
+                    backgroundColor: widget.book.isPinned
+                        ? const Color(0xFFD4B04C)
+                        : const Color(0xFF4F8EF7),
+                    icon: widget.book.isPinned
+                        ? CupertinoIcons.pin_slash_fill
+                        : CupertinoIcons.pin_fill,
+                    label: widget.book.isPinned ? '取消置顶' : '置顶',
+                    onPressed: () async {
+                      _setOpen(false);
+                      await widget.onTogglePinned();
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  _ShelfActionButton(
+                    backgroundColor: const Color(0xFFFF5A5F),
+                    icon: CupertinoIcons.delete_solid,
+                    label: '删除',
+                    onPressed: () async {
+                      _setOpen(false);
+                      await widget.onDelete();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(_offset, 0, 0),
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _offset != 0 ? () => _setOpen(false) : null,
+              onHorizontalDragUpdate: (details) {
+                final next = (_offset + details.delta.dx).clamp(-_maxReveal, 0.0);
+                if (next == _offset) return;
+                setState(() => _offset = next);
+              },
+              onHorizontalDragEnd: (details) {
+                final shouldOpen = _offset.abs() > _maxReveal * 0.36 ||
+                    details.primaryVelocity != null &&
+                        details.primaryVelocity! < -240;
+                _setOpen(shouldOpen);
+              },
+              child: AbsorbPointer(
+                absorbing: _offset != 0,
+                child: widget.child,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShelfActionButton extends StatelessWidget {
+  const _ShelfActionButton({
+    required this.backgroundColor,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final Color backgroundColor;
+  final IconData icon;
+  final String label;
+  final Future<void> Function() onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      minimumSize: Size.zero,
+      onPressed: onPressed,
+      child: Container(
+        width: 88,
+        height: 106,
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 22,
+              offset: Offset(0, 14),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: CupertinoColors.white, size: 22),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: CupertinoColors.white,
+              ),
+            ),
+          ],
         ),
       ),
     );

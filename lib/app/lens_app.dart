@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import '../models/book.dart';
 import '../models/vocabulary_level.dart';
 import '../services/imported_file_store.dart';
+import '../services/scan_book_store.dart';
+import '../screens/scan/scan_reader_page.dart';
 import '../screens/reading/pdf_reader_page.dart';
 import '../screens/reading/reading_screen.dart';
 import '../screens/shelf/shelf_tab.dart';
@@ -62,7 +64,12 @@ class _LensAppHostState extends State<LensAppHost> {
     if (!lower.endsWith('.txt') &&
         !lower.endsWith('.epub') &&
         !lower.endsWith('.docx') &&
-        !lower.endsWith('.pdf')) {
+        !lower.endsWith('.pdf') &&
+        !lower.endsWith('.png') &&
+        !lower.endsWith('.jpg') &&
+        !lower.endsWith('.jpeg') &&
+        !lower.endsWith('.heic') &&
+        !lower.endsWith('.webp')) {
       return;
     }
     if (_lastOpenedPath == path) return;
@@ -81,9 +88,10 @@ class _LensAppHostState extends State<LensAppHost> {
 
     () async {
       await widget.state.initialize();
+      if (!mounted) return;
       final ctx = lensNavigatorKey.currentContext;
       VocabularyLevel? level;
-      if (ctx == null) {
+      if (ctx == null || !ctx.mounted) {
         level = VocabularyLevel.cet4;
       } else {
         level = await showVocabularyLevelActionSheet(
@@ -96,21 +104,55 @@ class _LensAppHostState extends State<LensAppHost> {
 
       final originalName = path.split(Platform.pathSeparator).last;
       final title = originalName.replaceAll(
-        RegExp(r'\.(txt|epub|docx|pdf)$', caseSensitive: false),
+        RegExp(
+          r'\.(txt|epub|docx|pdf|png|jpg|jpeg|heic|webp)$',
+          caseSensitive: false,
+        ),
         '',
       );
-      final storedPath = await ImportedFileStore.ingest(path);
-      final book = Book(
-        title: title.isEmpty ? originalName : title,
-        author: '本地导入',
-        defaultLevel: level,
-        source: BookSource.localFile,
-        locator: storedPath,
-      );
+      late final Book book;
+      if (lower.endsWith('.png') ||
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.heic') ||
+          lower.endsWith('.webp')) {
+        final doc = await ScanBookStore.create(
+          title: title.isEmpty ? ScanBookStore.defaultTitle() : title,
+          firstImagePath: path,
+        );
+        book = Book(
+          title: doc.title,
+          author: '图片导入',
+          defaultLevel: level,
+          source: BookSource.localFile,
+          locator: doc.path,
+          coverFilePath: doc.coverPath,
+        );
+      } else {
+        final storedPath = await ImportedFileStore.ingest(path);
+        book = Book(
+          title: title.isEmpty ? originalName : title,
+          author: '本地导入',
+          defaultLevel: level,
+          source: BookSource.localFile,
+          locator: storedPath,
+        );
+      }
 
       // Persist into shelf so it appears in Tab 1.
       await widget.state.addToShelf(book);
-      if (lower.endsWith('.pdf')) {
+      if (book.isScanDocument) {
+        navigator.push(
+          CupertinoPageRoute<void>(
+            builder: (_) => ScanReaderPage(
+              scanDocumentPath: book.locator,
+              initialLevel: book.defaultLevel,
+              bookTitle: book.title,
+              sourceLabel: book.author,
+            ),
+          ),
+        );
+      } else if (lower.endsWith('.pdf')) {
         navigator.push(
           CupertinoPageRoute<void>(
             builder: (_) => PdfReaderPage(book: book),
@@ -161,7 +203,7 @@ class _FloatingTabsShell extends StatefulWidget {
 }
 
 class _FloatingTabsShellState extends State<_FloatingTabsShell> {
-  static const _appleBlue = Color(0xFF007AFF);
+  static const _appleBlue = Color(0xFF6D5B3D);
   static const _inactive = Color(0xFF8E8E93);
   static const double _barHeight = 60;
   static const double _barRadius = 24;
@@ -177,9 +219,10 @@ class _FloatingTabsShellState extends State<_FloatingTabsShell> {
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     final reservedBottom = _barHeight + 12 + mq.padding.bottom;
+    const shellBg = Color(0xFFF6F4EE);
 
     return DecoratedBox(
-      decoration: const BoxDecoration(color: Color(0xFFF2F2F7)),
+      decoration: const BoxDecoration(color: shellBg),
       child: Stack(
         children: [
           Padding(
@@ -206,7 +249,7 @@ class _FloatingTabsShellState extends State<_FloatingTabsShell> {
                   child: Container(
                     height: _barHeight,
                     decoration: BoxDecoration(
-                      color: CupertinoColors.systemGrey6.withValues(alpha: 0.86),
+                      color: const Color(0xFFF8F5EC).withValues(alpha: 0.92),
                       borderRadius: BorderRadius.circular(_barRadius),
                       border: Border.all(color: const Color(0x1A000000)),
                       boxShadow: const [

@@ -109,6 +109,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
   @override
   Widget build(BuildContext context) {
+    const bg = Color(0xFFF6F4EE);
     final widgetTitle =
         widget.book.title.trim().isEmpty ? 'PDF' : widget.book.title.trim();
 
@@ -140,20 +141,27 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     };
 
     return material.Scaffold(
-      backgroundColor: material.Colors.white,
+      backgroundColor: bg,
       body: material.Material(
-        color: material.Colors.white,
+        color: bg,
         child: CupertinoPageScaffold(
           navigationBar: CupertinoNavigationBar(
+            backgroundColor: bg.withValues(alpha: 0.94),
+            border: null,
             middle: Text(widgetTitle),
             leading: CupertinoButton(
               padding: EdgeInsets.zero,
+              minimumSize: const Size(34, 34),
               onPressed: () => Navigator.of(context).maybePop(),
-              child: const Text('返回'),
+              child: const Icon(
+                CupertinoIcons.chevron_back,
+                size: 20,
+                color: Color(0xFF3D3A34),
+              ),
             ),
           ),
           child: DecoratedBox(
-            decoration: const BoxDecoration(color: CupertinoColors.white),
+            decoration: const BoxDecoration(color: bg),
             child: Stack(
               children: [
                 // Keep the PDF content out of the Home Indicator area.

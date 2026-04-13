@@ -4,6 +4,9 @@ import 'vocabulary_level.dart';
 
 enum BookSource { localFile, asset, mock }
 
+const _bookTitleSuffixPattern =
+    r'\.(txt|epub|docx|pdf|png|jpg|jpeg|heic|webp)$';
+
 class Book {
   const Book({
     required this.title,
@@ -11,7 +14,9 @@ class Book {
     required this.defaultLevel,
     required this.source,
     required this.locator,
+    this.isPinned = false,
     this.coverAssetPath,
+    this.coverFilePath,
     this.blurb,
   });
 
@@ -22,11 +27,28 @@ class Book {
 
   // For local files: absolute path. For assets: asset path. For mock: mock URL.
   final String locator;
+  final bool isPinned;
   final String? coverAssetPath;
+  final String? coverFilePath;
   final String? blurb;
 
   // Alias for readability: product requirements call this "level".
   VocabularyLevel get level => defaultLevel;
+
+  String get lowerLocator => locator.toLowerCase();
+
+  bool get isPdf => lowerLocator.endsWith('.pdf');
+
+  bool get isScanDocument => lowerLocator.endsWith('.lingfer_scan.json');
+
+  bool get isImage =>
+      lowerLocator.endsWith('.png') ||
+      lowerLocator.endsWith('.jpg') ||
+      lowerLocator.endsWith('.jpeg') ||
+      lowerLocator.endsWith('.heic') ||
+      lowerLocator.endsWith('.webp');
+
+  bool get isScanContent => isImage || isScanDocument;
 
   String get id => stableKey;
 
@@ -36,7 +58,21 @@ class Book {
         defaultLevel: next,
         source: source,
         locator: locator,
+        isPinned: isPinned,
         coverAssetPath: coverAssetPath,
+        coverFilePath: coverFilePath,
+        blurb: blurb,
+      );
+
+  Book withPinned(bool pinned) => Book(
+        title: title,
+        author: author,
+        defaultLevel: defaultLevel,
+        source: source,
+        locator: locator,
+        isPinned: pinned,
+        coverAssetPath: coverAssetPath,
+        coverFilePath: coverFilePath,
         blurb: blurb,
       );
 
@@ -49,6 +85,12 @@ class Book {
   }
 
   String get subtitle {
+    if (isImage) {
+      return '扫描图片';
+    }
+    if (isScanDocument) {
+      return '扫描文稿';
+    }
     switch (source) {
       case BookSource.localFile:
         return '本地导入';
@@ -61,11 +103,20 @@ class Book {
 
   static Book fromLocalPath(String path, {required VocabularyLevel defaultLevel}) {
     final name = path.split(Platform.pathSeparator).last;
-    final title =
-        name.replaceAll(RegExp(r'\.(txt|epub|docx|pdf)$', caseSensitive: false), '');
+    final lower = path.toLowerCase();
+    final title = name.replaceAll(
+      RegExp(_bookTitleSuffixPattern, caseSensitive: false),
+      '',
+    );
     return Book(
       title: title.isEmpty ? name : title,
-      author: '本地导入',
+      author: lower.endsWith('.png') ||
+              lower.endsWith('.jpg') ||
+              lower.endsWith('.jpeg') ||
+              lower.endsWith('.heic') ||
+              lower.endsWith('.webp')
+          ? '图片导入'
+          : '本地导入',
       defaultLevel: defaultLevel,
       source: BookSource.localFile,
       locator: path,
@@ -95,7 +146,9 @@ class Book {
         'level': defaultLevel.name,
         'source': source.name,
         'locator': locator,
+        'isPinned': isPinned,
         'coverAssetPath': coverAssetPath,
+        'coverFilePath': coverFilePath,
         'blurb': blurb,
       };
 
@@ -105,6 +158,7 @@ class Book {
     final defaultLevel = (json['level'] is String) ? json['level'] : json['defaultLevel'];
     final source = json['source'];
     final locator = json['locator'];
+    final isPinned = json['isPinned'];
     if (title is! String ||
         author is! String ||
         defaultLevel is! String ||
@@ -130,6 +184,7 @@ class Book {
     if (level == null || src == null) return null;
 
     final cover = json['coverAssetPath'];
+    final coverFile = json['coverFilePath'];
     final blurb = json['blurb'];
     return Book(
       title: title,
@@ -137,7 +192,9 @@ class Book {
       defaultLevel: level,
       source: src,
       locator: locator,
+      isPinned: isPinned is bool ? isPinned : false,
       coverAssetPath: cover is String ? cover : null,
+      coverFilePath: coverFile is String ? coverFile : null,
       blurb: blurb is String ? blurb : null,
     );
   }

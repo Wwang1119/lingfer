@@ -43,7 +43,7 @@ class _LingferRootState extends State<LingferRoot> {
     super.dispose();
   }
 
-  static const Color _appleBlue = Color(0xFF007AFF);
+  static const Color _actionTint = Color(0xFF3D3A34);
   static const Color _liquidSelectionColor = Color(0x40D1D1D6);
   static const Color _appleSystemGray = Color(0xFF8E8E93);
   static const Color _handleDeepSpace = Color(0xFF3A3A3C);
@@ -87,7 +87,7 @@ class _LingferRootState extends State<LingferRoot> {
           ),
           cupertinoOverrideTheme: const CupertinoThemeData(
             brightness: Brightness.light,
-            primaryColor: _appleBlue,
+            primaryColor: _actionTint,
             selectionHandleColor: _handleDeepSpace,
           ),
         ),

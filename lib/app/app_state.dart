@@ -28,9 +28,11 @@ class AppState extends ChangeNotifier {
     return prefs.getInt('progress_topChunk_${book.stableKey}') ?? 0;
   }
 
+  int pinnedCount() => _shelf.where((book) => book.isPinned).length;
+
   Future<void> addToShelf(Book book) async {
     _shelf.removeWhere((b) => b.stableKey == book.stableKey);
-    _shelf.insert(0, book);
+    _insertBook(book);
     notifyListeners();
     await _persistShelf();
   }
@@ -54,7 +56,8 @@ class AppState extends ChangeNotifier {
     // Avoid duplicates if another card already uses the new ID.
     _shelf.removeWhere((b) => b.stableKey == newBook.stableKey && b.stableKey != oldId);
 
-    _shelf[idx] = newBook;
+    _shelf.removeAt(idx);
+    _insertBook(newBook, preferredIndex: idx);
     notifyListeners();
 
     final prefs = _prefs;
@@ -169,6 +172,37 @@ class AppState extends ChangeNotifier {
       _shelf.clear();
     }
     notifyListeners();
+  }
+
+  Future<void> togglePinned(Book book) async {
+    final idx = _shelf.indexWhere((b) => b.stableKey == book.stableKey);
+    if (idx < 0) return;
+    final next = _shelf[idx].withPinned(!_shelf[idx].isPinned);
+    _shelf.removeAt(idx);
+    _insertBook(next, preferredIndex: idx);
+    notifyListeners();
+    await _persistShelf();
+  }
+
+  void _insertBook(Book book, {int? preferredIndex}) {
+    if (book.isPinned) {
+      final pinnedCount = _shelf.where((item) => item.isPinned).length;
+      final target = preferredIndex == null
+          ? 0
+          : preferredIndex.clamp(0, pinnedCount);
+      _shelf.insert(target, book);
+      return;
+    }
+
+    final firstUnpinned = _shelf.indexWhere((item) => !item.isPinned);
+    if (firstUnpinned < 0) {
+      _shelf.add(book);
+      return;
+    }
+    final target = preferredIndex == null
+        ? firstUnpinned
+        : preferredIndex.clamp(firstUnpinned, _shelf.length);
+    _shelf.insert(target, book);
   }
 
   Future<void> _persistShelf() async {

@@ -360,6 +360,135 @@ class AiTranslationService {
     }
   }
 
+  /// Cleans noisy OCR output into readable body text.
+  ///
+  /// The primary use case is photo-based scanning: keep the image itself
+  /// selectable, but present a cleaner body-text version underneath.
+  /// This method never throws. If the proxy is unavailable or the request
+  /// fails, it falls back to locally sanitized text.
+  Future<String> cleanupOcrPlainText({
+    required String raw,
+  }) async {
+    final sanitized = _sanitizeForAi(raw, maxLen: 4200);
+    if (sanitized.isEmpty) return '';
+
+    final uri = _proxyUri;
+    if (uri == null) {
+      debugPrint('[ai] OCR cleanup: proxy URL missing, using local fallback.');
+      return sanitized;
+    }
+    if (_appSecret.isEmpty) {
+      debugPrint('[ai] OCR cleanup: APP_SECRET missing, using local fallback.');
+      return sanitized;
+    }
+
+    const systemPrompt =
+        '你是一个 OCR 正文整理助手。请将用户提供的一页 OCR 文本整理成适合阅读的正文段落。\n'
+        '规则：\n'
+        '1. 删除页眉页脚、页码、装饰符号、图标字符、广告语、重复标题、明显乱码、公式残片、无意义特殊符号。\n'
+        '2. 删除明显不是正文的碎片内容，但不要编造任何原文里不存在的句子。\n'
+        '3. 宁可保留疑似正文的小字、边注、对话标识、脚注或弱化文字，也不要误删真实正文。\n'
+        '4. 不要因为字体小、字数少、位置靠边，就擅自删除可能属于正文的内容。\n'
+        '5. 保留原始语言，不要翻译，不要总结，不要添加解释。\n'
+        '6. 合并被 OCR 生硬拆开的行，让段落格式更自然。\n'
+        '7. 如果某些字符看起来像 OCR 误识别，请在不改变原意的前提下进行最小修复。\n'
+        '8. 最终只输出整理后的纯文本正文，不要 Markdown，不要代码块，不要额外说明。';
+
+    final body = <String, Object?>{
+      'model': 'deepseek-chat',
+      'messages': [
+        {'role': 'system', 'content': systemPrompt},
+        {'role': 'user', 'content': sanitized},
+      ],
+      'temperature': 0.15,
+    };
+
+    final preview = sanitized.length <= 260
+        ? sanitized
+        : sanitized.substring(0, 260);
+    final promptForLog = StringBuffer()
+      ..writeln('[ai] ocr cleanup rawLen=${raw.length} sanitizedLen=${sanitized.length}')
+      ..writeln('[ai] systemPrompt:\n$systemPrompt')
+      ..writeln('[ai] userContentPreview:\n$preview');
+
+    try {
+      final client = http.Client();
+      try {
+        http.Response? response;
+        Object? lastError;
+
+        for (var attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            response = await client
+                .post(
+                  uri,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-App-Secret': _appSecret,
+                  },
+                  body: jsonEncode(body),
+                )
+                .timeout(const Duration(seconds: 25));
+
+            if (response.statusCode >= 500) {
+              throw Exception('Proxy HTTP ${response.statusCode}');
+            }
+            break;
+          } catch (e) {
+            lastError = e;
+            if (attempt < 2) {
+              final backoffMs = 350 * (attempt + 1) * (attempt + 1);
+              await Future<void>.delayed(Duration(milliseconds: backoffMs));
+              continue;
+            }
+          }
+        }
+
+        if (response == null) {
+          throw Exception('Proxy request failed: $lastError');
+        }
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          debugPrint(promptForLog.toString());
+          debugPrint(
+            '[ai] OCR cleanup proxy HTTP ${response.statusCode} body=${response.body}',
+          );
+          throw Exception('Proxy HTTP ${response.statusCode}');
+        }
+
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          debugPrint(promptForLog.toString());
+          debugPrint('[ai] OCR cleanup raw response: ${response.body}');
+          throw const FormatException('Unexpected DeepSeek response JSON');
+        }
+        final choices = decoded['choices'];
+        if (choices is! List || choices.isEmpty) {
+          debugPrint(promptForLog.toString());
+          debugPrint('[ai] OCR cleanup raw response: ${response.body}');
+          throw const FormatException('DeepSeek response missing choices');
+        }
+        final message = (choices.first as Map<String, dynamic>)['message'];
+        final content =
+            (message is Map<String, dynamic>) ? message['content'] : null;
+        if (content is! String || content.trim().isEmpty) {
+          debugPrint(promptForLog.toString());
+          debugPrint('[ai] OCR cleanup raw response: ${response.body}');
+          throw const FormatException('DeepSeek response missing message.content');
+        }
+
+        return _stripMarkdownFence(content).trim();
+      } finally {
+        client.close();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('[ai] OCR cleanup error=$error');
+      debugPrintStack(stackTrace: stackTrace);
+      debugPrint(promptForLog.toString());
+      return sanitized;
+    }
+  }
+
   /// Extracts a list of core vocabulary entries from an English paragraph.
   ///
   /// This is used by the PDF "Apple Glass" bottom sheet in 【核心生词】 mode.
@@ -524,6 +653,15 @@ class AiTranslationService {
       throw const FormatException('Model output is not JSON');
     }
     return trimmed.substring(start, end + 1);
+  }
+
+  String _stripMarkdownFence(String content) {
+    final trimmed = content.trim();
+    if (!trimmed.startsWith('```')) return trimmed;
+    return trimmed
+        .replaceFirst(RegExp(r'^```[a-zA-Z0-9_-]*\n?'), '')
+        .replaceFirst(RegExp(r'\n?```$'), '')
+        .trim();
   }
 
   String _extractJsonArray(String content) {
