@@ -1,123 +1,94 @@
 # 语渡 Lingfer
 
-`语渡（Lingfer）` 是一个基于 Flutter 开发的多格式 AI 阅读应用，当前重点面向 `iOS / macOS`，同时保留 Android 与桌面端工程骨架。它把本地阅读、PDF 原样阅读、OCR 扫描、AI 翻译、生词提取和苹果风阅读交互整合到了一套体验里。
+语渡 Lingfer 是一个开发中的 AI 阅读与语言学习应用，使用 Flutter 构建，当前重点面向 iOS / macOS。它把本地多格式阅读、拍照识字、翻译与生词学习放在同一套阅读流程中。
 
-## 当前功能
+仓库名与 Dart 包名统一为 `lingfer`；应用中文名称为「语渡」。同账号下的 [lingfer-nemotron](https://github.com/Wwang1119/lingfer-nemotron) 目前尚无功能实现或集成；应用中的 AI 代理仍使用 DeepSeek。
 
-- 支持导入本地 `TXT / EPUB / PDF / DOCX` 文件并加入书架。
-- 支持从 `文件 / 照片 / 相机` 三个入口添加内容。
-- 支持图片 OCR 与拍照扫描，识别后的文本可直接长按学习。
-- 支持 `TXT / EPUB / DOCX` 文本阅读，以及 `PDF` 原样渲染阅读。
-- 支持长按选词、整段翻译、核心生词提取，并通过 Apple Glass 风格浮层展示。
-- 支持多档词汇难度切换，例如四级、六级、考研、雅思、托福等。
-- 支持中英学习模式切换、主题切换、字号调节、书签与高亮标记。
-- 支持阅读进度记忆、本地缓存，以及删除书籍时同步清理缓存。
-- 支持内置探索页和本地书架双入口。
+## 开发入口
 
-## 技术栈
+| 要做的事 | 文档 |
+| --- | --- |
+| 首次运行与日常开发 | 本页及[开发说明](docs/DEVELOPMENT.md) |
+| 查看已知问题和下一步 | [项目状态与待办](docs/PROJECT_STATUS.md) |
+| 配置翻译代理 | [CloudBase 代理说明](cloudbase/deepseek_proxy/README.md) |
+| 修改依赖、版本或资源 | [pubspec.yaml](pubspec.yaml) |
+| 查阅隐私政策 | [privacy_policy.html](privacy_policy.html)，下载后可用浏览器打开 |
+| 打包与上传 iOS 版本 | [开发说明中的发布流程](docs/DEVELOPMENT.md#ios-发布) |
 
-- Flutter 3 / Dart 3
-- `epubx`：EPUB 解析
-- `syncfusion_flutter_pdfviewer`：PDF 阅读
-- `docx_to_text`：DOCX 文本提取
-- `google_mlkit_text_recognition`：Android OCR
-- Apple Vision：iOS OCR
-- `shared_preferences`：进度、书签、缓存状态持久化
-- `path_provider`：导入文件与缓存目录管理
-- `http`：AI 代理请求
+## 已有功能
 
-## 运行前准备
+- 导入本地 TXT / EPUB / PDF / DOCX，加入书架。
+- 从文件、相册或相机添加内容；iOS 使用 Apple Vision，Android 使用 ML Kit 进行 OCR。
+- 文本阅读与 PDF 原样渲染，支持选词、段落翻译和核心生词提取。
+- 词汇难度、中英学习模式、主题、字号、书签与高亮。
+- 保存阅读进度、本地缓存；删除书籍时清理相关数据。
+- 书架与探索页入口。
 
-1. 安装 Flutter SDK，并确保 `flutter doctor` 基本通过。
-2. 如需启用 AI 功能，请准备代理服务地址与应用密钥。
-3. iOS/macOS 首次运行前，建议执行一次 CocoaPods 安装。
+这些功能已包含在代码中，具体平台可用性需在对应设备验证。Android 与其他平台的发布细节仍需核对；存在平台目录不代表已完整适配。探索页的部分示例资源尚未补齐，见[已知问题](docs/PROJECT_STATUS.md)。
 
-## 本地运行
+## 环境要求
 
-### 安装依赖
+- Flutter SDK，内含 Dart 3.11.1 或更高的兼容 3.x 版本，约束见 `pubspec.yaml`；仓库未单独固定 Flutter 版本。
+- iOS/macOS：macOS、Xcode、CocoaPods，以及目标模拟器或真机。
+- Android：Android SDK 和模拟器或真机。
+
+## 快速开始
 
 ```bash
+git clone https://github.com/Wwang1119/lingfer.git
+cd lingfer
+flutter doctor
 flutter pub get
+flutter devices
 ```
 
-### 安装 iOS Pods
+先运行本地阅读功能，无需 AI 凭证：
 
 ```bash
-cd ios
-pod install
-cd ..
+flutter run -d macos
 ```
 
-### 运行 iOS 模拟器
+iOS 使用 `flutter devices` 列出的设备 ID：`flutter run -d <设备ID>`。首次构建如遇 Pods 问题，在 `ios/` 或 `macos/` 执行 `pod install` 后重试。
 
-```bash
-open -a Simulator
-flutter run -d ios \
-  --dart-define=DEEPSEEK_PROXY_URL=https://你的代理地址 \
-  --dart-define=APP_SECRET=你的应用暗号
-```
-
-### 运行 macOS 桌面版
+启用 AI 时，在编译或启动时传入代理地址和共享访问口令：
 
 ```bash
 flutter run -d macos \
-  --dart-define=DEEPSEEK_PROXY_URL=https://你的代理地址 \
-  --dart-define=APP_SECRET=你的应用暗号
+  --dart-define=DEEPSEEK_PROXY_URL=https://your-proxy.example.com \
+  --dart-define=APP_SECRET=your-development-secret
 ```
 
-## 使用方法
+这两个值由 `String.fromEnvironment` 在编译期读取，改完需要重新启动构建，不能只依赖热重载。`DEEPSEEK_API_KEY` 只配置在云函数服务端；`APP_SECRET` 是随客户端打包的共享口令，不是用户登录认证。
 
-### 添加内容
+## 日常检查
 
-- 在书架页点击右上角 `+` 按钮。
-- 可选择：
-  - `文件`：导入本地 TXT / EPUB / PDF / DOCX
-  - `照片`：从相册选择图片进行 OCR
-  - `相机`：拍照后进行 OCR
+在仓库根目录执行：
 
-### 阅读与学习
-
-- 点击书架中的书籍卡片进入阅读页。
-- 长按正文或 PDF 文本，可触发翻译 / 生词提取面板。
-- 阅读页可切换词汇难度、语言模式、主题、字号与排版方式。
-- 可添加书签与高亮，方便后续复习与回看。
-
-### 删除书籍
-
-- 在书架中长按书籍卡片。
-- 点击“删除本书”后，会同步清理书架记录、阅读进度与翻译缓存。
-
-## 资源目录约定
-
-```text
-assets/
-  books/       预置书籍
-  covers/      封面图
-  branding/    图标、启动图等品牌素材
+```bash
+flutter analyze
+flutter test
 ```
 
-## AI 配置说明
-
-项目当前不在客户端硬编码模型密钥，运行时通过 `--dart-define` 注入：
-
-- `DEEPSEEK_PROXY_URL`
-- `APP_SECRET`
-
-如果未传入，应用仍可正常打开本地内容，但 AI 翻译相关能力不会完整生效。
+当前只有一个基础界面测试，尚未覆盖文件导入、OCR、翻译、PDF 与缓存清理完整流程；当前没有 GitHub Actions 自动检查。每次修改后按[开发说明](docs/DEVELOPMENT.md)中的清单在目标设备验证，并记录结果。
 
 ## 目录结构
 
 ```text
-lib/
-  app/         全局状态与应用壳
-  models/      数据模型
-  screens/     页面层（书架、探索、阅读、扫描）
-  services/    导入、缓存、AI、清理等服务
-  widgets/     复用组件
+lib/app/                     应用状态与应用壳
+lib/models/                  书籍、主题、词汇与翻译模式
+lib/screens/                 书架、探索、阅读、扫描等页面
+lib/services/                导入、存储、翻译与缓存清理
+lib/widgets/                 复用界面组件
+lib/catalog/                 探索页书目
+assets/                      预置内容、封面和品牌素材
+cloudbase/deepseek_proxy/    DeepSeek HTTP 代理云函数
+test/                        Flutter 测试
+tool/                        iOS 导出与上传脚本
+docs/                        开发说明、项目状态和待办
 ```
 
-## 说明
+## 维护方式
 
-- 当前优先优化方向是 `iOS / macOS` 的苹果风阅读体验。
-- Android 工程可运行，但交互与发布细节仍在持续完善。
-- 若准备上架，请同步检查隐私政策、权限文案、签名、图标与启动图配置。
+新增或修复功能时，同步记录运行平台、验证步骤与剩余问题；影响配置或使用方式的改动应更新相应文档。书籍与图片要核对资源声明和引用路径，第三方内容保留来源与使用条件。
+
+仓库尚未选择开源许可证，第三方依赖与素材沿用各自许可。
