@@ -10,16 +10,47 @@ import 'package:path_provider/path_provider.dart';
 /// The simplest robust approach is to copy the file into our own container and
 /// only read from there.
 class ImportedFileStore {
-  static const MethodChannel _securityScope =
-      MethodChannel('lingfer/security_scope');
+  static const MethodChannel _securityScope = MethodChannel(
+    'lingfer/security_scope',
+  );
 
   static Future<Directory> _importDir() async {
     final support = await getApplicationSupportDirectory();
-      final dir = Directory(
-        '${support.path}${Platform.pathSeparator}Lingfer${Platform.pathSeparator}ImportedBooks',
-      );
+    final dir = Directory(
+      '${support.path}${Platform.pathSeparator}Lingfer${Platform.pathSeparator}ImportedBooks',
+    );
     await dir.create(recursive: true);
     return dir;
+  }
+
+  /// Resolves only the exact relative path of a file previously copied into
+  /// our managed import directory. iOS can move an app's data container during
+  /// updates; an old absolute locator must not make that intact copy disappear.
+  /// This never searches other folders or rewrites the persisted book identity.
+  static Future<String> resolveReadablePath(
+    String locator, {
+    Directory? supportDirectory,
+  }) async {
+    if (await File(locator).exists()) return locator;
+    final separator = Platform.pathSeparator;
+    final marker = '${separator}Lingfer${separator}ImportedBooks$separator';
+    final index = locator.lastIndexOf(marker);
+    if (index < 0) return locator;
+    final relative = locator.substring(index + marker.length);
+    final parts = relative.split(separator);
+    if (relative.isEmpty ||
+        parts.any((part) => part.isEmpty || part == '..' || part == '.')) {
+      return locator;
+    }
+    try {
+      final support =
+          supportDirectory ?? await getApplicationSupportDirectory();
+      final candidate =
+          '${support.path}${separator}Lingfer${separator}ImportedBooks$separator$relative';
+      return await File(candidate).exists() ? candidate : locator;
+    } catch (_) {
+      return locator;
+    }
   }
 
   static Future<void> _startSecurityScopeIfNeeded(String path) async {

@@ -1,10 +1,15 @@
 # Uncomment this line to define a global platform for your project
 #
-# google_mlkit_* requires a higher minimum iOS deployment target.
+# Keep the existing minimum supported iOS version.
 platform :ios, '15.5'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+# Photos/camera use image_picker. FilePicker only needs the document picker.
+PICKER_MEDIA = false
+PICKER_AUDIO = false
+PICKER_DOCUMENT = true
 
 project 'Runner', {
   'Debug' => :debug,

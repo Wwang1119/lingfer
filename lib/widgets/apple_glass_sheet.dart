@@ -8,6 +8,8 @@ import 'package:flutter/material.dart' as material;
 import '../models/translation_mode.dart';
 import '../models/vocabulary_level.dart';
 import '../services/ai_translation_service.dart';
+import '../features/companion/lingfer_theme.dart';
+import 'book_reader_presentation.dart';
 
 /// "Apple Glass" translation panel.
 ///
@@ -41,18 +43,23 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
   static const int _segmentVocab = 1;
 
   static const TextStyle _panelBaseTextStyle = TextStyle(
+    inherit: false,
     decoration: TextDecoration.none,
-    color: Color(0xFF000000),
-    fontFamily: '.SF UI Text',
+    color: LingferColors.ink,
+    fontFamily: LingferType.interfaceFontFamily,
+    fontFamilyFallback: LingferType.interfaceFontFallback,
+    fontSize: 14,
   );
-  static const Color _panelBg = Color(0xFFF6F4EE);
-  static const Color _panelCard = Color(0xFFFFFCF8);
-  static const Color _panelBorder = Color(0x12000000);
+  static const Color _panelBg = LingferColors.background;
+  static const Color _panelCard = LingferColors.paper;
+  static const Color _panelBorder = LingferColors.line;
 
   static const TextStyle _segmentLabelStyle = TextStyle(
+    inherit: false,
     decoration: TextDecoration.none,
-    color: Color(0xFF1C1C1E),
-    fontFamily: '.SF UI Text',
+    color: LingferColors.ink,
+    fontFamily: LingferType.interfaceFontFamily,
+    fontFamilyFallback: LingferType.interfaceFontFallback,
     fontSize: 13,
     fontWeight: FontWeight.w600,
     height: 1.1,
@@ -302,7 +309,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
             child: const Icon(
               CupertinoIcons.clear_thick,
               size: 18,
-              color: Color(0xFF6E6E73),
+              color: LingferColors.muted,
             ),
           ),
         ],
@@ -322,41 +329,16 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
         style: const TextStyle(
           fontSize: 12.5,
           height: 1.25,
-          color: Color(0xFF6E6E73),
+          color: LingferColors.muted,
         ),
       ),
     );
   }
 
   Widget _levelPicker() {
-    const labels = <VocabularyLevel, String>{
-      VocabularyLevel.zhongkao: '中考',
-      VocabularyLevel.gaokao: '高考',
-      VocabularyLevel.cet4: '四级',
-      VocabularyLevel.cet6: '六级',
-      VocabularyLevel.kaoyan: '考研',
-      VocabularyLevel.ielts: '雅思',
-      VocabularyLevel.toefl: '托福',
-    };
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      child: CupertinoSlidingSegmentedControl<VocabularyLevel>(
-        groupValue: _level,
-        thumbColor: _panelCard,
-        backgroundColor: const Color(0x12000000),
-        children: {
-          for (final entry in labels.entries)
-            entry.key: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
-              child: Text(entry.value, style: _segmentLabelStyle),
-            ),
-        },
-        onValueChanged: (v) {
-          if (v == null) return;
-          _setLevel(v);
-        },
-      ),
+      child: BookReaderRangeSelector(selected: _level, onSelected: _setLevel),
     );
   }
 
@@ -369,7 +351,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
           const SizedBox(width: 10),
           Text(
             text,
-            style: const TextStyle(fontSize: 14, color: Color(0xFF6E6E73)),
+            style: const TextStyle(fontSize: 14, color: LingferColors.muted),
           ),
         ],
       ),
@@ -407,13 +389,15 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
                 child: Text(
-                  text.isNotEmpty ? text : (error.isNotEmpty ? error : '暂无翻译结果'),
+                  text.isNotEmpty
+                      ? text
+                      : (error.isNotEmpty ? error : '暂无翻译结果'),
                   style: TextStyle(
                     fontSize: 16,
                     height: 1.5,
                     color: text.isNotEmpty
-                        ? const Color(0xFF1C1C1E)
-                        : const Color(0xFF8E8E93),
+                        ? LingferColors.ink
+                        : LingferColors.muted,
                   ),
                 ),
               ),
@@ -457,7 +441,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.2,
-                        color: Color(0xFF1C1C1E),
+                        color: LingferColors.ink,
                       ),
                     ),
                   ),
@@ -466,7 +450,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
                       phonetic,
                       style: const TextStyle(
                         fontSize: 13,
-                        color: Color(0xFF8E8E93),
+                        color: LingferColors.muted,
                       ),
                     ),
                 ],
@@ -478,7 +462,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
                   style: const TextStyle(
                     fontSize: 15,
                     height: 1.45,
-                    color: Color(0xFF1C1C1E),
+                    color: LingferColors.ink,
                   ),
                 ),
               ],
@@ -511,7 +495,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
             child: Text(
               _vocabError!,
-              style: const TextStyle(fontSize: 14, color: Color(0xFF8E8E93)),
+              style: const TextStyle(fontSize: 14, color: LingferColors.muted),
             ),
           ),
         ),
@@ -523,7 +507,7 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
             padding: EdgeInsets.fromLTRB(16, 6, 16, 18),
             child: Text(
               '该段落没有符合当前难度的核心生词。',
-              style: TextStyle(fontSize: 14, color: Color(0xFF8E8E93)),
+              style: TextStyle(fontSize: 14, color: LingferColors.muted),
             ),
           ),
         ),
@@ -548,8 +532,9 @@ class _AppleGlassPanelState extends State<AppleGlassPanel> {
     final minHeightRaw = math.min(240.0, safeHeight * 0.55);
     final minHeight = math.min(math.max(minHeightRaw, 160.0), safeHeight);
     final maxHeight = math.max(minHeight, safeHeight * 0.72);
-    final defaultHeight =
-        (safeHeight * 0.38).clamp(minHeight, maxHeight).toDouble();
+    final defaultHeight = (safeHeight * 0.38)
+        .clamp(minHeight, maxHeight)
+        .toDouble();
     final panelHeight = ((_panelHeight > 0) ? _panelHeight : defaultHeight)
         .clamp(minHeight, maxHeight)
         .toDouble();

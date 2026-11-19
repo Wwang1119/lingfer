@@ -5,21 +5,25 @@ import 'package:http/http.dart' as http;
 
 import '../models/translation_mode.dart';
 import '../models/vocabulary_level.dart';
+import 'ai_consent_store.dart';
 
 class AiTranslationService {
   AiTranslationService({
     required String proxyUrl,
     required String appSecret,
-  })  : _proxyUri = Uri.tryParse(proxyUrl),
-        _appSecret = appSecret;
+    http.Client Function()? clientFactory,
+  }) : _proxyUri = Uri.tryParse(proxyUrl),
+       _appSecret = appSecret,
+       _clientFactory = clientFactory ?? (() => http.Client());
 
   final Uri? _proxyUri;
   final String _appSecret;
+  final http.Client Function() _clientFactory;
 
   static const String _garbleImmunityPrompt =
-      '提取的英文中可能包含由 PDF 矢量公式/特殊符号引起的乱码。'
-      '请你作为顶级语言专家，极其智能地忽略这些乱码，结合上下文脑补并修复成正常的句子后再翻译或提取生词。'
-      '绝对不要把乱码直接翻译出来或报错。';
+      '原文可能包含由 PDF 公式或特殊符号产生的识别错误。'
+      '不确定的符号请保留原样并注明无法确认，不得根据上下文猜测补全。'
+      '仅翻译可以可靠识别的内容。';
 
   /// Sanitizes noisy PDF selections so they won't break JSON encoding or model
   /// parsing. We intentionally keep common punctuation and CJK/Latin letters,
@@ -82,7 +86,7 @@ class AiTranslationService {
     try {
       final jsonText = await fetchVocabJson(raw: raw, level: level, mode: mode);
       if (jsonText == null) return raw;
-      final vocab = parseVocabJson(jsonText);
+      final vocab = parseVocabJson(jsonText, mode: mode, source: raw);
       if (vocab.isEmpty) return raw;
       return applyVocabReplacements(raw, vocab, mode: mode);
     } catch (error, stackTrace) {
@@ -97,6 +101,7 @@ class AiTranslationService {
     required VocabularyLevel level,
     required TranslationMode mode,
   }) async {
+    if (!await AiConsentStore.isAllowed()) return null;
     final uri = _proxyUri;
     if (uri == null) {
       debugPrint('[ai] Proxy URL is invalid or empty. Set DEEPSEEK_PROXY_URL.');
@@ -119,6 +124,7 @@ class AiTranslationService {
             '严禁提取基础简单词汇，宁可少提或不提，也绝不凑数。\n'
             '如果该段落没有符合【${level.label}】难度的生词，请直接返回空 JSON {}。\n'
             '请务必只返回合法的 JSON 格式，格式为：{"EnglishWord": "中文翻译"}，不要返回任何其他内容。\n'
+            '键必须是原文中出现的英文词或短语；值必须包含中文释义，不要返回英文定义、英文同义词或原词本身。\n'
             '$_garbleImmunityPrompt',
     };
 
@@ -130,24 +136,17 @@ class AiTranslationService {
       ],
       'temperature': 0.2,
     };
-    final rawPreviewStart = raw.length <= 240 ? raw : raw.substring(0, 240);
-    final rawPreviewEnd = raw.length <= 240 ? '' : raw.substring(raw.length - 240);
-    final promptForLog = StringBuffer()
-      ..writeln('[ai] mode=${mode.name} level=${level.label} rawLen=${raw.length}')
-      ..writeln('[ai] systemPrompt:\n$systemPrompt')
-      ..writeln('[ai] userContentPreview(start):\n$rawPreviewStart');
-    if (rawPreviewEnd.isNotEmpty) {
-      promptForLog.writeln('[ai] userContentPreview(end):\n$rawPreviewEnd');
-    }
-
     try {
-      final client = http.Client();
+      final client = _clientFactory();
       try {
         http.Response? response;
         Object? lastError;
 
         for (var attempt = 0; attempt < 3; attempt += 1) {
           try {
+            if (!await AiConsentStore.isAllowed()) {
+              throw const _AiConsentRequired();
+            }
             response = await client
                 .post(
                   uri,
@@ -164,6 +163,8 @@ class AiTranslationService {
               throw Exception('Proxy HTTP ${response.statusCode}');
             }
             break;
+          } on _AiConsentRequired {
+            rethrow;
           } catch (e) {
             lastError = e;
             if (attempt < 2) {
@@ -179,7 +180,7 @@ class AiTranslationService {
         }
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          debugPrint(promptForLog.toString());
+          // Reading content is intentionally excluded from logs.
           debugPrint(
             '[ai] Proxy HTTP ${response.statusCode} body=${response.body}',
           );
@@ -188,43 +189,37 @@ class AiTranslationService {
 
         final decoded = jsonDecode(response.body);
         if (decoded is! Map<String, dynamic>) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('Unexpected DeepSeek response JSON');
         }
         final choices = decoded['choices'];
         if (choices is! List || choices.isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('DeepSeek response missing choices');
         }
         final message = (choices.first as Map<String, dynamic>)['message'];
-        final content =
-            (message is Map<String, dynamic>) ? message['content'] : null;
+        final content = (message is Map<String, dynamic>)
+            ? message['content']
+            : null;
         if (content is! String || content.trim().isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
-          throw const FormatException('DeepSeek response missing message.content');
+          // Reading content is intentionally excluded from logs.
+          throw const FormatException(
+            'DeepSeek response missing message.content',
+          );
         }
 
-        final extracted = _extractJsonObject(content);
-        try {
-          final maybe = jsonDecode(extracted);
-          if (maybe is Map && maybe.isEmpty) {
-            debugPrint(promptForLog.toString());
-            debugPrint('[ai] Model returned empty JSON {}.');
-          }
-        } catch (_) {
-          // If it isn't valid JSON, _extractJsonObject will have thrown earlier.
-        }
-        return extracted;
+        return validateVocabResponse(
+          _extractJsonObject(content),
+          mode: mode,
+          source: raw,
+        );
       } finally {
         client.close();
       }
     } catch (error, stackTrace) {
       debugPrint('[ai] fetch vocab json error=$error');
       debugPrintStack(stackTrace: stackTrace);
-      debugPrint(promptForLog.toString());
+      // Reading content is intentionally excluded from logs.
       return null;
     }
   }
@@ -236,6 +231,7 @@ class AiTranslationService {
     required String raw,
     required TranslationMode mode,
   }) async {
+    if (!await AiConsentStore.isAllowed()) return null;
     final uri = _proxyUri;
     if (uri == null) {
       debugPrint('[ai] Proxy URL is invalid or empty. Set DEEPSEEK_PROXY_URL.');
@@ -271,24 +267,17 @@ class AiTranslationService {
       'temperature': 0.2,
     };
 
-    final rawPreview = sanitized.length <= 240
-        ? sanitized
-        : sanitized.substring(0, 240);
-    final promptForLog = StringBuffer()
-      ..writeln(
-        '[ai] plain translate mode=${mode.name} rawLen=${raw.length} sanitizedLen=${sanitized.length}',
-      )
-      ..writeln('[ai] systemPrompt:\n$guardedSystemPrompt')
-      ..writeln('[ai] userContentPreview:\n$rawPreview');
-
     try {
-      final client = http.Client();
+      final client = _clientFactory();
       try {
         http.Response? response;
         Object? lastError;
 
         for (var attempt = 0; attempt < 3; attempt += 1) {
           try {
+            if (!await AiConsentStore.isAllowed()) {
+              throw const _AiConsentRequired();
+            }
             response = await client
                 .post(
                   uri,
@@ -305,6 +294,8 @@ class AiTranslationService {
               throw Exception('Proxy HTTP ${response.statusCode}');
             }
             break;
+          } on _AiConsentRequired {
+            rethrow;
           } catch (e) {
             lastError = e;
             if (attempt < 2) {
@@ -320,7 +311,7 @@ class AiTranslationService {
         }
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          debugPrint(promptForLog.toString());
+          // Reading content is intentionally excluded from logs.
           debugPrint(
             '[ai] Proxy HTTP ${response.statusCode} body=${response.body}',
           );
@@ -329,23 +320,23 @@ class AiTranslationService {
 
         final decoded = jsonDecode(response.body);
         if (decoded is! Map<String, dynamic>) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('Unexpected DeepSeek response JSON');
         }
         final choices = decoded['choices'];
         if (choices is! List || choices.isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('DeepSeek response missing choices');
         }
         final message = (choices.first as Map<String, dynamic>)['message'];
-        final content =
-            (message is Map<String, dynamic>) ? message['content'] : null;
+        final content = (message is Map<String, dynamic>)
+            ? message['content']
+            : null;
         if (content is! String || content.trim().isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
-          throw const FormatException('DeepSeek response missing message.content');
+          // Reading content is intentionally excluded from logs.
+          throw const FormatException(
+            'DeepSeek response missing message.content',
+          );
         }
 
         return content.trim();
@@ -355,7 +346,7 @@ class AiTranslationService {
     } catch (error, stackTrace) {
       debugPrint('[ai] plain translate error=$error');
       debugPrintStack(stackTrace: stackTrace);
-      debugPrint(promptForLog.toString());
+      // Reading content is intentionally excluded from logs.
       return null;
     }
   }
@@ -366,11 +357,10 @@ class AiTranslationService {
   /// selectable, but present a cleaner body-text version underneath.
   /// This method never throws. If the proxy is unavailable or the request
   /// fails, it falls back to locally sanitized text.
-  Future<String> cleanupOcrPlainText({
-    required String raw,
-  }) async {
+  Future<String> cleanupOcrPlainText({required String raw}) async {
     final sanitized = _sanitizeForAi(raw, maxLen: 4200);
     if (sanitized.isEmpty) return '';
+    if (!await AiConsentStore.isAllowed()) return sanitized;
 
     final uri = _proxyUri;
     if (uri == null) {
@@ -403,22 +393,17 @@ class AiTranslationService {
       'temperature': 0.15,
     };
 
-    final preview = sanitized.length <= 260
-        ? sanitized
-        : sanitized.substring(0, 260);
-    final promptForLog = StringBuffer()
-      ..writeln('[ai] ocr cleanup rawLen=${raw.length} sanitizedLen=${sanitized.length}')
-      ..writeln('[ai] systemPrompt:\n$systemPrompt')
-      ..writeln('[ai] userContentPreview:\n$preview');
-
     try {
-      final client = http.Client();
+      final client = _clientFactory();
       try {
         http.Response? response;
         Object? lastError;
 
         for (var attempt = 0; attempt < 3; attempt += 1) {
           try {
+            if (!await AiConsentStore.isAllowed()) {
+              throw const _AiConsentRequired();
+            }
             response = await client
                 .post(
                   uri,
@@ -434,6 +419,8 @@ class AiTranslationService {
               throw Exception('Proxy HTTP ${response.statusCode}');
             }
             break;
+          } on _AiConsentRequired {
+            rethrow;
           } catch (e) {
             lastError = e;
             if (attempt < 2) {
@@ -449,7 +436,7 @@ class AiTranslationService {
         }
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          debugPrint(promptForLog.toString());
+          // Reading content is intentionally excluded from logs.
           debugPrint(
             '[ai] OCR cleanup proxy HTTP ${response.statusCode} body=${response.body}',
           );
@@ -458,23 +445,23 @@ class AiTranslationService {
 
         final decoded = jsonDecode(response.body);
         if (decoded is! Map<String, dynamic>) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] OCR cleanup raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('Unexpected DeepSeek response JSON');
         }
         final choices = decoded['choices'];
         if (choices is! List || choices.isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] OCR cleanup raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('DeepSeek response missing choices');
         }
         final message = (choices.first as Map<String, dynamic>)['message'];
-        final content =
-            (message is Map<String, dynamic>) ? message['content'] : null;
+        final content = (message is Map<String, dynamic>)
+            ? message['content']
+            : null;
         if (content is! String || content.trim().isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] OCR cleanup raw response: ${response.body}');
-          throw const FormatException('DeepSeek response missing message.content');
+          // Reading content is intentionally excluded from logs.
+          throw const FormatException(
+            'DeepSeek response missing message.content',
+          );
         }
 
         return _stripMarkdownFence(content).trim();
@@ -484,7 +471,7 @@ class AiTranslationService {
     } catch (error, stackTrace) {
       debugPrint('[ai] OCR cleanup error=$error');
       debugPrintStack(stackTrace: stackTrace);
-      debugPrint(promptForLog.toString());
+      // Reading content is intentionally excluded from logs.
       return sanitized;
     }
   }
@@ -512,6 +499,7 @@ class AiTranslationService {
     required String raw,
     required VocabularyLevel level,
   }) async {
+    if (!await AiConsentStore.isAllowed()) return null;
     final uri = _proxyUri;
     if (uri == null) {
       debugPrint('[ai] Proxy URL is invalid or empty. Set DEEPSEEK_PROXY_URL.');
@@ -546,22 +534,17 @@ class AiTranslationService {
       'temperature': 0.2,
     };
 
-    final preview = normalized.length <= 260
-        ? normalized
-        : normalized.substring(0, 260);
-    final promptForLog = StringBuffer()
-      ..writeln('[ai] core vocab level=${level.label} rawLen=${normalized.length}')
-      ..writeln('[ai] systemPrompt:\n$systemPrompt')
-      ..writeln('[ai] userContentPreview:\n$preview');
-
     try {
-      final client = http.Client();
+      final client = _clientFactory();
       try {
         http.Response? response;
         Object? lastError;
 
         for (var attempt = 0; attempt < 3; attempt += 1) {
           try {
+            if (!await AiConsentStore.isAllowed()) {
+              throw const _AiConsentRequired();
+            }
             response = await client
                 .post(
                   uri,
@@ -577,6 +560,8 @@ class AiTranslationService {
               throw Exception('Proxy HTTP ${response.statusCode}');
             }
             break;
+          } on _AiConsentRequired {
+            rethrow;
           } catch (e) {
             lastError = e;
             if (attempt < 2) {
@@ -592,7 +577,7 @@ class AiTranslationService {
         }
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          debugPrint(promptForLog.toString());
+          // Reading content is intentionally excluded from logs.
           debugPrint(
             '[ai] Proxy HTTP ${response.statusCode} body=${response.body}',
           );
@@ -601,30 +586,30 @@ class AiTranslationService {
 
         final decoded = jsonDecode(response.body);
         if (decoded is! Map<String, dynamic>) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('Unexpected DeepSeek response JSON');
         }
         final choices = decoded['choices'];
         if (choices is! List || choices.isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
+          // Reading content is intentionally excluded from logs.
           throw const FormatException('DeepSeek response missing choices');
         }
         final message = (choices.first as Map<String, dynamic>)['message'];
-        final content =
-            (message is Map<String, dynamic>) ? message['content'] : null;
+        final content = (message is Map<String, dynamic>)
+            ? message['content']
+            : null;
         if (content is! String || content.trim().isEmpty) {
-          debugPrint(promptForLog.toString());
-          debugPrint('[ai] Proxy raw response: ${response.body}');
-          throw const FormatException('DeepSeek response missing message.content');
+          // Reading content is intentionally excluded from logs.
+          throw const FormatException(
+            'DeepSeek response missing message.content',
+          );
         }
 
         final extracted = _extractJsonArray(content);
         try {
           final maybe = jsonDecode(extracted);
           if (maybe is List && maybe.isEmpty) {
-            debugPrint(promptForLog.toString());
+            // Reading content is intentionally excluded from logs.
             debugPrint('[ai] Model returned empty vocab list [].');
           }
         } catch (_) {}
@@ -635,7 +620,7 @@ class AiTranslationService {
     } catch (error, stackTrace) {
       debugPrint('[ai] fetch core vocab json error=$error');
       debugPrintStack(stackTrace: stackTrace);
-      debugPrint(promptForLog.toString());
+      // Reading content is intentionally excluded from logs.
       return null;
     }
   }
@@ -688,7 +673,11 @@ class AiTranslationService {
     return sub;
   }
 
-  static Map<String, String> parseVocabJson(String jsonText) {
+  static Map<String, String> parseVocabJson(
+    String jsonText, {
+    TranslationMode? mode,
+    String? source,
+  }) {
     final decoded = jsonDecode(jsonText);
     if (decoded is! Map) return const <String, String>{};
     final result = <String, String>{};
@@ -699,31 +688,131 @@ class AiTranslationService {
         if (kk.isNotEmpty && vv.isNotEmpty) result[kk] = vv;
       }
     });
+    return mode == null
+        ? result
+        : filterVocabularyForMode(result, mode: mode, source: source);
+  }
+
+  /// Returns only cacheable vocabulary JSON. A legitimate empty object means
+  /// no matches; an entirely invalid nonempty response remains a failed request.
+  static String? validateVocabResponse(
+    String jsonText, {
+    required TranslationMode mode,
+    required String source,
+  }) {
+    final decoded = jsonDecode(jsonText);
+    if (decoded is! Map) {
+      throw const FormatException('Vocabulary response must be an object');
+    }
+    final vocab = parseVocabJson(jsonText, mode: mode, source: source);
+    if (decoded.isNotEmpty && vocab.isEmpty) {
+      // Never log source text or model-produced vocabulary.
+      debugPrint(
+        '[ai] Vocabulary response has no valid target-language entries.',
+      );
+      return null;
+    }
+    return jsonEncode(vocab);
+  }
+
+  /// Validates both sides of an inline gloss before rendering or caching it.
+  /// Original prose is never changed by this filter: a rejected entry simply
+  /// leaves its source word unannotated.
+  static Map<String, String> filterVocabularyForMode(
+    Map<String, String> vocab, {
+    required TranslationMode mode,
+    String? source,
+  }) {
+    final result = <String, String>{};
+    final han = RegExp(r'[\u3400-\u9FFF]');
+    final latin = RegExp(r'[A-Za-z]');
+    for (final entry in vocab.entries) {
+      final word = entry.key.trim();
+      final meaning = entry.value.trim();
+      if (word.isEmpty || meaning.isEmpty) continue;
+      if (word.toLowerCase() == meaning.toLowerCase()) continue;
+      final valid = switch (mode) {
+        TranslationMode.enToZh =>
+          latin.hasMatch(word) && !han.hasMatch(word) && han.hasMatch(meaning),
+        TranslationMode.zhToEn =>
+          han.hasMatch(word) &&
+              latin.hasMatch(meaning) &&
+              !han.hasMatch(meaning),
+      };
+      if (!valid) continue;
+      if (source != null && !_sourcePattern(word, mode).hasMatch(source)) {
+        continue;
+      }
+      result[word] = meaning;
+    }
     return result;
   }
+
+  /// Callers can treat a mismatching historical cache as a cache miss without
+  /// deleting the file, reading progress, or any saved vocabulary.
+  static bool matchesVocabularyMode(
+    Map<String, String> vocab, {
+    required TranslationMode mode,
+    String? source,
+  }) =>
+      filterVocabularyForMode(vocab, mode: mode, source: source).length ==
+      vocab.length;
+
+  static RegExp _sourcePattern(String word, TranslationMode mode) => RegExp(
+    mode == TranslationMode.enToZh
+        ? r'(?<![A-Za-zÀ-ÖØ-öø-ÿ])' +
+              RegExp.escape(word) +
+              r'(?![A-Za-zÀ-ÖØ-öø-ÿ])'
+        : RegExp.escape(word),
+    caseSensitive: mode == TranslationMode.zhToEn,
+  );
 
   static String applyVocabReplacements(
     String text,
     Map<String, String> vocab, {
     required TranslationMode mode,
+    void Function(int sourceOffset, int renderedStart, int renderedEnd)?
+    onAnnotation,
   }) {
-    final keys = vocab.keys.toList()
+    final validated = filterVocabularyForMode(vocab, mode: mode, source: text);
+    final keys = validated.keys.toList()
       ..sort((a, b) => b.length.compareTo(a.length));
-
-    var output = text;
-    for (final key in keys) {
-      final english = vocab[key]!;
-      if (key.isEmpty || english.isEmpty) continue;
-      switch (mode) {
-        case TranslationMode.zhToEn:
-          output = output.replaceAll(key, '$key($english)');
-        case TranslationMode.enToZh:
-          final escaped = RegExp.escape(key);
-          final re = RegExp(r'\b' + escaped + r'\b', caseSensitive: false);
-          output = output.replaceAllMapped(re, (m) => '${m.group(0)}($english)');
-      }
-    }
-    return output;
+    if (keys.isEmpty) return text;
+    final alternatives = keys.map(RegExp.escape).join('|');
+    final pattern = RegExp(
+      mode == TranslationMode.enToZh
+          ? r'(?<![A-Za-zÀ-ÖØ-öø-ÿ])(?:' +
+                alternatives +
+                r')(?![A-Za-zÀ-ÖØ-öø-ÿ])'
+          : '(?:$alternatives)',
+      caseSensitive: mode == TranslationMode.zhToEn,
+    );
+    final meanings = mode == TranslationMode.enToZh
+        ? {
+            for (final entry in validated.entries)
+              entry.key.toLowerCase(): entry.value,
+          }
+        : validated;
+    // Match the original string once. Sequential replaceAll calls would also
+    // annotate words that a previous replacement had just inserted in a gloss.
+    var insertedLength = 0;
+    return text.replaceAllMapped(pattern, (match) {
+      final original = match.group(0)!;
+      final lookup = mode == TranslationMode.enToZh
+          ? original.toLowerCase()
+          : original;
+      final annotation = '(${meanings[lookup]})';
+      // String/Match offsets use UTF-16, as do Flutter text selections. Only
+      // newly generated annotations are reported; source parentheses stay prose.
+      final renderedStart = match.end + insertedLength;
+      onAnnotation?.call(
+        match.end,
+        renderedStart,
+        renderedStart + annotation.length,
+      );
+      insertedLength += annotation.length;
+      return '$original$annotation';
+    });
   }
 
   static List<CoreVocabItem> parseCoreVocabularyJson(String jsonText) {
@@ -772,4 +861,8 @@ class CoreVocabItem {
   final String word;
   final String phonetic;
   final String meaning;
+}
+
+class _AiConsentRequired implements Exception {
+  const _AiConsentRequired();
 }

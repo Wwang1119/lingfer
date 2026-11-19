@@ -1,5 +1,6 @@
 import Flutter
 import ImageIO
+import NaturalLanguage
 import UIKit
 import Vision
 
@@ -32,7 +33,7 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
         result(FlutterError(code: "bad_args", message: "Missing image path", details: nil))
         return
       }
-      recognizeText(atPath: path, result: result)
+      recognizeText(atPath: path, language: args["language"] as? String ?? args["script"] as? String ?? "auto", result: result)
     case "recognizeTextLayout":
       guard
         let args = call.arguments as? [String: Any],
@@ -42,14 +43,14 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
         result(FlutterError(code: "bad_args", message: "Missing image path", details: nil))
         return
       }
-      recognizeTextLayout(atPath: path, result: result)
+      recognizeTextLayout(atPath: path, language: args["language"] as? String ?? args["script"] as? String ?? "auto", result: result)
     default:
       result(FlutterMethodNotImplemented)
     }
   }
 
-  private func recognizeText(atPath path: String, result: @escaping FlutterResult) {
-    performRecognition(atPath: path) { payload, error in
+  private func recognizeText(atPath path: String, language: String, result: @escaping FlutterResult) {
+    performRecognition(atPath: path, language: language) { payload, error in
       if let error {
         result(error)
       } else if let payload {
@@ -62,8 +63,8 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  private func recognizeTextLayout(atPath path: String, result: @escaping FlutterResult) {
-    performRecognition(atPath: path) { payload, error in
+  private func recognizeTextLayout(atPath path: String, language: String, result: @escaping FlutterResult) {
+    performRecognition(atPath: path, language: language) { payload, error in
       if let error {
         result(error)
       } else if let payload {
@@ -74,6 +75,7 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
 
   private func performRecognition(
     atPath path: String,
+    language: String,
     completion: @escaping ([String: Any]?, FlutterError?) -> Void
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
@@ -96,8 +98,9 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
         return
       }
 
-      let imageWidth = CGFloat(cgImage.width)
-      let imageHeight = CGFloat(cgImage.height)
+      let rotated = [.left, .right, .leftMirrored, .rightMirrored].contains(image.imageOrientation)
+      let imageWidth = CGFloat(rotated ? cgImage.height : cgImage.width)
+      let imageHeight = CGFloat(rotated ? cgImage.width : cgImage.height)
       let orientation = Self.cgImageOrientation(for: image.imageOrientation)
 
       let request = VNRecognizeTextRequest { request, error in
@@ -120,29 +123,33 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
         linesPayload.reserveCapacity(observations.count)
 
         for observation in observations {
-          guard let candidate = observation.topCandidates(1).first else { continue }
-
-          let rawLines = candidate.string
-            .components(separatedBy: CharacterSet.newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-          let lineCount = max(rawLines.count, 1)
-          let normalizedBox = observation.boundingBox
-          let lineHeight = normalizedBox.height / CGFloat(lineCount)
-          let topFromTop = 1.0 - normalizedBox.minY - normalizedBox.height
-
-          for (index, lineText) in rawLines.enumerated() {
-            let lineTop = topFromTop + (CGFloat(index) * lineHeight)
-            linesPayload.append([
-              "text": lineText,
-              "left": normalizedBox.minX * imageWidth,
-              "top": lineTop * imageHeight,
-              "width": normalizedBox.width * imageWidth,
-              "height": lineHeight * imageHeight,
-            ])
+          guard let candidate = observation.topCandidates(1).first, !candidate.string.isEmpty else { continue }
+          let box = observation.boundingBox
+          let value = candidate.string
+          let tokenizer = NLTokenizer(unit: .word)
+          tokenizer.string = value
+          var words: [[String: Any]] = []
+          tokenizer.enumerateTokens(in: value.startIndex..<value.endIndex) { range, _ in
+            if let tokenBox = try? candidate.boundingBox(for: range)?.boundingBox {
+              words.append([
+                "text": String(value[range]), "start": NSRange(range, in: value).location,
+                "end": NSMaxRange(NSRange(range, in: value)),
+                "left": tokenBox.minX * imageWidth, "top": (1-tokenBox.maxY) * imageHeight,
+                "width": tokenBox.width * imageWidth, "height": tokenBox.height * imageHeight
+              ])
+            }
+            return true
           }
+          linesPayload.append([
+            "id": "s\(linesPayload.count)", "text": value,
+            "left": box.minX * imageWidth, "top": (1-box.maxY) * imageHeight,
+            "width": box.width * imageWidth, "height": box.height * imageHeight, "words": words
+          ])
         }
+        let wholeText = linesPayload.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        let identifier = NLLanguageRecognizer()
+        identifier.processString(wholeText)
+        let detected = identifier.dominantLanguage?.rawValue.components(separatedBy: "-").first ?? "en"
 
         let payload: [String: Any] = [
           "text": linesPayload
@@ -150,6 +157,7 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
             .joined(separator: "\n"),
           "imageWidth": Double(imageWidth),
           "imageHeight": Double(imageHeight),
+          "detectedLanguage": detected,
           "lines": linesPayload,
         ]
 
@@ -160,7 +168,14 @@ public final class VisionOcrPlugin: NSObject, FlutterPlugin {
 
       request.recognitionLevel = .accurate
       request.usesLanguageCorrection = true
-      request.recognitionLanguages = ["zh-Hans", "en-US"]
+      let mapping = ["en":"en-US", "latin":"en-US", "zh":"zh-Hans", "chinese":"zh-Hans", "ja":"ja-JP", "japanese":"ja-JP", "ko":"ko-KR", "korean":"ko-KR", "fr":"fr-FR", "de":"de-DE", "es":"es-ES", "pt":"pt-BR", "it":"it-IT", "hi":"hi-IN", "devanagari":"hi-IN"]
+      let supported = (try? request.supportedRecognitionLanguages()) ?? ["en-US", "zh-Hans"]
+      if let selected = mapping[language], !supported.contains(selected) {
+        DispatchQueue.main.async { completion(nil, FlutterError(code: "UNSUPPORTED_LANGUAGE", message: "当前系统暂不支持所选语言的图片识别，可粘贴文字翻译。", details: language)) }
+        return
+      }
+      request.recognitionLanguages = (mapping[language].map { [$0] } ?? ["en-US", "zh-Hans", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "pt-BR", "it-IT"]).filter { supported.contains($0) }
+      if #available(iOS 16.0, *) { request.automaticallyDetectsLanguage = language == "auto" }
 
       let handler = VNImageRequestHandler(
         cgImage: cgImage,

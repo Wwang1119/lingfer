@@ -31,7 +31,11 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/ios/build/
+/ios/Runner.xcodeproj/**/*.backup
+/ios/Runner.xcodeproj/*.backup
 /coverage/
+/artifacts/
 
 # Symbolication related
 app.*.symbols
@@ -43,3 +47,23 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local service configuration and generated Apple extension settings.
+.env
+.env.*
+!.env.example
+config/runtime.json
+ios/LingferShare/RuntimeConfig.plist
+
+# Local signing material and private App Store Connect evidence.
+*.p8
+*.p12
+*.mobileprovision
+/docs/release-screenshots/
+/_private/
+/设计的实践_完整版.pdf
+
+# Retired sample files retained by some existing local checkouts.
+/assets/books/cha_guan.epub
+/assets/books/wo_zhe_yi_bei_zi.epub
+/assets/books/sample_paper.pdf

@@ -19,19 +19,30 @@ import '../../models/translation_mode.dart';
 import '../../models/vocabulary_level.dart';
 import '../../services/ai_translation_service.dart';
 import '../../services/book_text_service.dart';
+import '../../services/reader_translation_cache.dart';
+import '../../services/reader_text_anchor.dart';
 import '../../widgets/apple_glass_sheet.dart';
 import '../../widgets/liquid_selection_controls.dart';
 import '../../widgets/reading_text.dart';
+import '../../widgets/book_display_title.dart';
+import '../../widgets/book_reader_presentation.dart';
+import '../../features/companion/lingfer_theme.dart';
 import '../../utils/level_color.dart';
 
-const String _deepSeekProxyUrl =
-    String.fromEnvironment('DEEPSEEK_PROXY_URL', defaultValue: '');
-const String _appSecret = String.fromEnvironment('APP_SECRET', defaultValue: '');
+const String _deepSeekProxyUrl = String.fromEnvironment(
+  'DEEPSEEK_PROXY_URL',
+  defaultValue: '',
+);
+const String _appSecret = String.fromEnvironment(
+  'APP_SECRET',
+  defaultValue: '',
+);
 
 class ReadingScreen extends StatefulWidget {
-  const ReadingScreen({super.key, required this.book});
+  const ReadingScreen({super.key, required this.book, this.translationService});
 
   final Book book;
+  final AiTranslationService? translationService;
 
   @override
   State<ReadingScreen> createState() => _ReadingScreenState();
@@ -93,7 +104,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
   final Map<int, _ChunkRender> _rendered = <int, _ChunkRender>{};
   final Set<int> _inFlight = <int>{};
+  final Set<int> _failedChunks = <int>{};
   int _translatingCount = 0;
+  int _translationGeneration = 0;
   final Set<int> _pendingChunkLoads = <int>{};
   final Map<int, bool> _pendingAllowNetwork = <int, bool>{};
   bool _postFrameLoadScheduled = false;
@@ -140,8 +153,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
     final y = _lastPointerDownGlobal?.dy;
     final h = MediaQuery.sizeOf(context).height;
-    final nextDock =
-        (y != null && y > h * 0.5) ? AppleGlassDock.top : AppleGlassDock.bottom;
+    final nextDock = (y != null && y > h * 0.5)
+        ? AppleGlassDock.top
+        : AppleGlassDock.bottom;
     if (_chromeVisible || _settingsVisible || nextDock != _glassDock) {
       setState(() {
         _chromeVisible = false;
@@ -176,11 +190,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
     // Avoid aggressive expansion when the user already selected a paragraph.
     if (t.length > 80) return t;
 
-    final candidates = <int>[
-      _anchorIndex,
-      _anchorIndex - 1,
-      _anchorIndex + 1,
-    ];
+    final candidates = <int>[_anchorIndex, _anchorIndex - 1, _anchorIndex + 1];
     for (final idx in candidates) {
       final unit = _unitTextForSelection(idx);
       if (unit == null) continue;
@@ -259,6 +269,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
   }
 
   Future<void> _initBook() async {
+    _translationGeneration += 1;
     setState(() {
       _initializing = true;
       _loadError = null;
@@ -272,6 +283,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
       _repaginateScheduled = false;
       _rendered.clear();
       _inFlight.clear();
+      _failedChunks.clear();
       _translatingCount = 0;
       _pendingChunkLoads.clear();
       _pendingAllowNetwork.clear();
@@ -290,8 +302,19 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
       final text = await _bookTextService.readBookText(_book);
       if (!mounted) return;
+      if (text.trim().isEmpty) {
+        throw const FormatException('这份资料没有可阅读的正文，请返回后重新导入。');
+      }
+      final languageSample = text.substring(0, math.min(text.length, 2400));
+      final latinCount = RegExp(r'[A-Za-z]').allMatches(languageSample).length;
+      final chineseCount = RegExp(
+        r'[\u3400-\u9FFF]',
+      ).allMatches(languageSample).length;
       setState(() {
         _bookText = text;
+        if (latinCount >= 40 && latinCount > chineseCount * 2) {
+          _mode = TranslationMode.enToZh;
+        }
         _initializing = false;
       });
 
@@ -306,11 +329,15 @@ class _ReadingScreenState extends State<ReadingScreen> {
         if (!mounted) return;
         _rebuildUnitsAndRestoreProgress();
       });
-
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _loadError = '$error';
+        _loadError = error is FileSystemException
+            ? '原文件暂时无法读取，请返回后重新导入这份资料。'
+            : '$error'.replaceFirst(
+                RegExp(r'^(?:FormatException|BookReadException|Exception):\s*'),
+                '',
+              );
         _initializing = false;
       });
     }
@@ -409,6 +436,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
     if (_chunkDisplayStarts.isEmpty || _allChunks.isEmpty) {
       return ReadingText(
         chunkText: _displayText.substring(start, end),
+        annotations: const [],
         accentColor: const Color(0xFF999999),
         fontSize: _fontSize,
         baseColor: baseColor,
@@ -419,13 +447,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
       applyHeightToFirstAscent: false,
       applyHeightToLastDescent: false,
     );
-    final baseStyle = TextStyle(
-      color: baseColor,
-      fontSize: _fontSize,
-      height: 1.6,
-      letterSpacing: 0.5,
-      decoration: TextDecoration.none,
-      fontFamilyFallback: const ['.SF UI Text', '.SF Pro Text', 'PingFang SC'],
+    final baseStyle = BookReaderTypography.body(
+      size: _fontSize,
+      ink: baseColor,
     );
     final strut = StrutStyle(
       fontSize: _fontSize,
@@ -437,9 +461,11 @@ class _ReadingScreenState extends State<ReadingScreen> {
     final startChunk = _chunkIndexForDisplayOffset(start);
     final endChunk = _chunkIndexForDisplayOffset(math.max(start, end - 1));
 
-    for (var chunkIndex = startChunk;
-        chunkIndex <= endChunk && chunkIndex < _allChunks.length;
-        chunkIndex += 1) {
+    for (
+      var chunkIndex = startChunk;
+      chunkIndex <= endChunk && chunkIndex < _allChunks.length;
+      chunkIndex += 1
+    ) {
       final chunkStart = _chunkDisplayStarts[chunkIndex];
       final chunkEnd = (chunkIndex + 1 < _chunkDisplayStarts.length)
           ? _chunkDisplayStarts[chunkIndex + 1]
@@ -449,34 +475,27 @@ class _ReadingScreenState extends State<ReadingScreen> {
       if (segEnd <= segStart) continue;
 
       final chunkText = _rendered[chunkIndex]?.text ?? _allChunks[chunkIndex];
-      final localStart =
-          (segStart - chunkStart).clamp(0, chunkText.length).toInt();
-      final localEnd =
-          (segEnd - chunkStart).clamp(localStart, chunkText.length).toInt();
+      final localStart = (segStart - chunkStart)
+          .clamp(0, chunkText.length)
+          .toInt();
+      final localEnd = (segEnd - chunkStart)
+          .clamp(localStart, chunkText.length)
+          .toInt();
       if (localEnd <= localStart) continue;
 
-      final accentColor = _rendered[chunkIndex]?.accentColor ??
-          const Color(0xFF999999);
-      final accentStyle = TextStyle(
-        color: accentColor,
-        fontSize: (_fontSize - 2).clamp(12, 30).toDouble(),
-        height: 1.6,
-        letterSpacing: 0.5,
-        decoration: TextDecoration.none,
-        fontFamilyFallback: const ['.SF UI Text', '.SF Pro Text', 'PingFang SC'],
+      final accentStyle = BookReaderTypography.annotation(
+        size: _fontSize,
+        ink: baseColor,
       );
 
-      // If the page boundary slices through "(...)" we still want to keep the
-      // inside text colored correctly.
-      final prefix = chunkText.substring(0, localStart);
-      final inParenAtStart =
-          prefix.lastIndexOf('(') > prefix.lastIndexOf(')');
-      final segment = chunkText.substring(localStart, localEnd);
-      _appendParenAwareSpans(
-        spans,
-        segment,
-        accentStyle: accentStyle,
-        inParenAtStart: inParenAtStart,
+      spans.addAll(
+        ReadingText.spansForAnnotations(
+          chunkText,
+          start: localStart,
+          end: localEnd,
+          annotations: _rendered[chunkIndex]?.annotations ?? const [],
+          accentStyle: accentStyle,
+        ),
       );
     }
 
@@ -490,59 +509,59 @@ class _ReadingScreenState extends State<ReadingScreen> {
     );
   }
 
-  void _appendParenAwareSpans(
-    List<TextSpan> out,
-    String segment, {
-    required TextStyle accentStyle,
-    required bool inParenAtStart,
-  }) {
-    if (segment.isEmpty) return;
-    var inParen = inParenAtStart;
-    final buf = StringBuffer();
-
-    void flush() {
-      if (buf.isEmpty) return;
-      out.add(TextSpan(text: buf.toString(), style: inParen ? accentStyle : null));
-      buf.clear();
-    }
-
-    for (var i = 0; i < segment.length; i += 1) {
-      final cu = segment.codeUnitAt(i);
-      if (cu == 0x28) {
-        // (
-        flush();
-        out.add(const TextSpan(text: '('));
-        inParen = true;
-        continue;
-      }
-      if (cu == 0x29) {
-        // )
-        flush();
-        out.add(const TextSpan(text: ')'));
-        inParen = false;
-        continue;
-      }
-      buf.writeCharCode(cu);
-    }
-    flush();
+  _ReaderAnchor? _readingSourceAnchor() {
+    if (_pages.isEmpty || _chunkDisplayStarts.isEmpty) return null;
+    final page = _anchorIndex.clamp(0, _pages.length - 1);
+    final position = _pages[page].start;
+    final chunk = _chunkIndexForDisplayOffset(position);
+    final local = position - _chunkDisplayStarts[chunk];
+    return (
+      chunk: chunk,
+      sourceOffset: ReaderTextAnchor.sourceOffset(
+        local,
+        _rendered[chunk]?.annotations ?? const [],
+      ),
+    );
   }
 
-  void _scheduleHorizontalRepagination() {
+  void _scheduleHorizontalRepagination({_ReaderAnchor? anchor}) {
     if (_layoutDirection != _ReaderLayoutDirection.horizontal) return;
     if (_repaginateScheduled) return;
     _repaginateScheduled = true;
+    final sourceAnchor = anchor ?? _readingSourceAnchor();
+    final generation = _translationGeneration;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _repaginateScheduled = false;
-      if (!mounted) return;
-      _recomputeHorizontalPagination(keepPageIndex: _anchorIndex);
+      if (!mounted || generation != _translationGeneration) return;
+      _recomputeHorizontalPagination(
+        keepPageIndex: _anchorIndex,
+        sourceAnchor: sourceAnchor,
+      );
     });
   }
 
-  void _recomputeHorizontalPagination({int? keepPageIndex}) {
+  void _recomputeHorizontalPagination({
+    int? keepPageIndex,
+    _ReaderAnchor? sourceAnchor,
+  }) {
     if (_layoutDirection != _ReaderLayoutDirection.horizontal) return;
-    final keep = keepPageIndex ?? _anchorIndex;
+    var keep = keepPageIndex ?? _anchorIndex;
     final composed = _composeDisplayText();
     final paginated = _paginateForHorizontal(context, composed.displayText);
+    if (sourceAnchor != null &&
+        sourceAnchor.chunk < composed.chunkStarts.length) {
+      final chunk = sourceAnchor.chunk;
+      final offset =
+          composed.chunkStarts[chunk] +
+          ReaderTextAnchor.renderedOffset(
+            sourceAnchor.sourceOffset,
+            _rendered[chunk]?.annotations ?? const [],
+          );
+      final anchoredPage = paginated.pages.lastIndexWhere(
+        (page) => page.start <= offset,
+      );
+      if (anchoredPage >= 0) keep = anchoredPage;
+    }
 
     setState(() {
       _displayText = composed.displayText;
@@ -553,8 +572,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final clamped =
-          _pages.isEmpty ? 0 : keep.clamp(0, _pages.length - 1);
+      final clamped = _pages.isEmpty ? 0 : keep.clamp(0, _pages.length - 1);
       try {
         _pageController.jumpToPage(clamped);
       } catch (_) {}
@@ -578,13 +596,20 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
     // Keep pagination math consistent with the actual reading viewport:
     // we reserve space for the persistent title + page indicator (HUD).
-    final topReserved = (_topPadding(context) - padding.top).clamp(0.0, safeHeight);
-    final bottomReserved =
-        (_bottomPadding(context) - padding.bottom).clamp(0.0, safeHeight);
+    final topReserved = (_topPadding(context) - padding.top).clamp(
+      0.0,
+      safeHeight,
+    );
+    final bottomReserved = (_bottomPadding(context) - padding.bottom).clamp(
+      0.0,
+      safeHeight,
+    );
 
     final width = (safeWidth - side * 2).clamp(240.0, 2400.0);
-    final height =
-        (safeHeight - topReserved - bottomReserved).clamp(240.0, 8000.0);
+    final height = (safeHeight - topReserved - bottomReserved).clamp(
+      240.0,
+      8000.0,
+    );
     return (width: width, height: height);
   }
 
@@ -627,16 +652,18 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
     final realAvailableHeight = viewport.height;
     final exactLineHeight = sample.preferredLineHeight;
-    final maxLines =
-        math.max(1, (realAvailableHeight / exactLineHeight).floor());
+    final maxLines = math.max(
+      1,
+      (realAvailableHeight / exactLineHeight).floor(),
+    );
     final textHeight = maxLines * exactLineHeight;
 
     _paginationKey = _fnvCacheKey(
       'p',
       '${viewport.width.round()}x$maxLines'
-      '_lh${exactLineHeight.toStringAsFixed(3)}'
-      '_fs${_fontSize.toStringAsFixed(1)}'
-      '_ts${scaleFactor.toStringAsFixed(3)}',
+          '_lh${exactLineHeight.toStringAsFixed(3)}'
+          '_fs${_fontSize.toStringAsFixed(1)}'
+          '_ts${scaleFactor.toStringAsFixed(3)}',
     );
 
     final pages = _paginateTextSlices(
@@ -727,19 +754,13 @@ class _ReadingScreenState extends State<ReadingScreen> {
           );
           final cut = pos.offset.clamp(1, sub.length).toInt();
           end = start + cut;
-          end = _adjustPageBreak(
-            text,
-            start,
-            end,
-            lookback: breakLookback,
-          );
+          end = _adjustPageBreak(text, start, end, lookback: breakLookback);
           break;
         }
 
         // Not filled yet: expand window (doubling, capped).
         final doubled = (windowEnd - start) * 2;
-        final nextChars =
-            doubled.clamp(minWindowChars, maxWindowChars).toInt();
+        final nextChars = doubled.clamp(minWindowChars, maxWindowChars).toInt();
         final nextEnd = start + math.min(remaining, nextChars).toInt();
         if (nextEnd <= windowEnd) {
           end = windowEnd;
@@ -894,8 +915,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
     final prefs = _prefs;
     if (prefs == null) return;
     try {
-      final list =
-          _highlights.map((m) => m.toJson()).toList(growable: false);
+      final list = _highlights.map((m) => m.toJson()).toList(growable: false);
       await prefs.setString(_highlightsKey(), jsonEncode(list));
     } catch (_) {}
   }
@@ -946,8 +966,6 @@ class _ReadingScreenState extends State<ReadingScreen> {
         _chunkDisplayStarts = const [];
         _pages = const [];
         _horizontalTextHeight = 0;
-        _inFlight.clear();
-        _translatingCount = 0;
         _pendingChunkLoads.clear();
         _pendingAllowNetwork.clear();
         _postFrameLoadScheduled = false;
@@ -959,8 +977,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final saved = (_prefs?.getInt(_progressKey()) ?? 0);
-        final clamped =
-            _allChunks.isEmpty ? 0 : saved.clamp(0, _allChunks.length - 1);
+        final clamped = _allChunks.isEmpty
+            ? 0
+            : saved.clamp(0, _allChunks.length - 1);
         _anchorIndex = clamped;
         if (_unitIndex.value != clamped) {
           _unitIndex.value = clamped;
@@ -983,8 +1002,6 @@ class _ReadingScreenState extends State<ReadingScreen> {
       _chunkDisplayStarts = composed.chunkStarts;
       _pages = paginated.pages;
       _horizontalTextHeight = paginated.textHeight;
-      _inFlight.clear();
-      _translatingCount = 0;
       _pendingChunkLoads.clear();
       _pendingAllowNetwork.clear();
       _postFrameLoadScheduled = false;
@@ -996,8 +1013,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final saved = (_prefs?.getInt(_progressKey()) ?? 0);
-      final clamped =
-          _pages.isEmpty ? 0 : saved.clamp(0, _pages.length - 1);
+      final clamped = _pages.isEmpty ? 0 : saved.clamp(0, _pages.length - 1);
       if (clamped <= 0) return;
       try {
         _pageController.jumpToPage(clamped);
@@ -1009,13 +1025,6 @@ class _ReadingScreenState extends State<ReadingScreen> {
       _requestChunksForPage(clamped, allowNetwork: true);
       _requestChunksForPage(clamped + 1, allowNetwork: true);
     });
-  }
-
-  String _sanitizeForPathSegment(String s) {
-    final t = s.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (t.isEmpty) return 'x';
-    // Keep Unicode (Chinese) intact; only replace illegal filename characters.
-    return t.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   }
 
   String _fnvCacheKey(String prefix, String input) {
@@ -1036,26 +1045,18 @@ class _ReadingScreenState extends State<ReadingScreen> {
     );
   }
 
-  File _cacheFileForChunk(int index, String levelLabel) {
-    final dir = _cacheDirForBook();
-    final levelSeg = _sanitizeForPathSegment(levelLabel);
-    return File(
-      '${dir.path}${Platform.pathSeparator}chunk_${index}_$levelSeg.json',
+  String? _readCacheSyncFor(int index, String levelLabel) {
+    if (index < 0 || index >= _allChunks.length) return null;
+    return ReaderTranslationCache(directory: _cacheDirForBook()).read(
+      index: index,
+      levelLabel: levelLabel,
+      mode: _mode,
+      raw: _allChunks[index],
     );
   }
 
-  String? _readCacheSyncFor(int index, String levelLabel) {
-    try {
-      final file = _cacheFileForChunk(index, levelLabel);
-      if (!file.existsSync()) return null;
-      return file.readAsStringSync();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String _chunkFrozenLevelKey(int index) {
-    return 'chunk_level_${_bookId}_$index';
+  String _chunkFrozenLevelKey(int index, {TranslationMode? mode}) {
+    return 'chunk_level_${_bookId}_${ReaderTranslationCache.modeID(mode ?? _mode)}_$index';
   }
 
   ({String cacheText, String levelLabel})? _readBestCacheSync(int index) {
@@ -1085,17 +1086,6 @@ class _ReadingScreenState extends State<ReadingScreen> {
     }
 
     return null;
-  }
-
-  Future<void> _writeCache(int index, String levelLabel, String jsonText) async {
-    try {
-      final file = _cacheFileForChunk(index, levelLabel);
-      await file.parent.create(recursive: true);
-      await file.writeAsString(jsonText, flush: true);
-    } catch (error, stackTrace) {
-      debugPrint('[cache] write error=$error');
-      debugPrintStack(stackTrace: stackTrace);
-    }
   }
 
   void _requestChunkLoad(int index, {required bool allowNetwork}) {
@@ -1131,6 +1121,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
     if (index < 0 || index >= _allChunks.length) return;
     if (_rendered.containsKey(index)) return;
     if (_inFlight.contains(index)) return;
+    if (_failedChunks.contains(index)) return;
 
     final raw = _allChunks[index];
 
@@ -1140,18 +1131,21 @@ class _ReadingScreenState extends State<ReadingScreen> {
       if (cached != null) {
         final render = _renderFromCacheOrRaw(raw, cached.cacheText);
         final prevEffective = _rendered[index]?.text ?? raw;
+        final sourceAnchor = _readingSourceAnchor();
         // Freeze this chunk to the cached level so later level switches won't
         // trigger re-translation.
         final prefs = _prefs;
         if (prefs != null) {
-          unawaited(prefs.setString(_chunkFrozenLevelKey(index), cached.levelLabel));
+          unawaited(
+            prefs.setString(_chunkFrozenLevelKey(index), cached.levelLabel),
+          );
         }
         setState(() {
           _rendered[index] = render;
         });
         if (_layoutDirection == _ReaderLayoutDirection.horizontal &&
             prevEffective != render.text) {
-          _scheduleHorizontalRepagination();
+          _scheduleHorizontalRepagination(anchor: sourceAnchor);
         }
         return;
       }
@@ -1169,20 +1163,28 @@ class _ReadingScreenState extends State<ReadingScreen> {
       _inFlight.add(index);
       _translatingCount += 1;
     });
-    unawaited(_translateAndCache(index, raw, level: level, mode: mode));
+    unawaited(
+      _translateAndCache(
+        index,
+        raw,
+        level: level,
+        mode: mode,
+        generation: _translationGeneration,
+      ),
+    );
   }
 
   _ChunkRender _renderFromCacheOrRaw(String raw, String cacheText) {
     try {
       final decoded = jsonDecode(cacheText);
       if (decoded is! Map) {
-        return _ChunkRender(
-          text: raw,
-          accentColor: const Color(0xFF999999),
-        );
+        return _ChunkRender(text: raw, accentColor: const Color(0xFF999999));
       }
       final levelLabel = decoded['level'];
       final mode = decoded['mode'];
+      if (mode != ReaderTranslationCache.modeID(_mode)) {
+        return _ChunkRender(text: raw, accentColor: LingferColors.accent);
+      }
       final data = decoded['data'];
       if (data is! Map) {
         return _ChunkRender(
@@ -1194,15 +1196,26 @@ class _ReadingScreenState extends State<ReadingScreen> {
       data.forEach((k, v) {
         if (k is String && v is String) vocab[k] = v;
       });
+      final annotations = <ReaderAnnotationSpan>[];
       final replaced = vocab.isEmpty
           ? raw
           : AiTranslationService.applyVocabReplacements(
               raw,
               vocab,
-              mode: _modeFromCache(mode),
+              mode: _mode,
+              onAnnotation: (sourceOffset, renderedStart, renderedEnd) {
+                annotations.add(
+                  ReaderAnnotationSpan(
+                    sourceOffset: sourceOffset,
+                    renderedStart: renderedStart,
+                    renderedEnd: renderedEnd,
+                  ),
+                );
+              },
             );
       return _ChunkRender(
         text: replaced,
+        annotations: annotations,
         accentColor: getLevelColor((levelLabel is String) ? levelLabel : ''),
       );
     } catch (_) {
@@ -1210,25 +1223,22 @@ class _ReadingScreenState extends State<ReadingScreen> {
     }
   }
 
-  TranslationMode _modeFromCache(Object? mode) {
-    final m = (mode is String) ? mode : '';
-    if (m == 'en_zh') return TranslationMode.enToZh;
-    return TranslationMode.zhToEn;
-  }
-
   Future<void> _translateAndCache(
     int index,
     String raw, {
     required VocabularyLevel level,
     required TranslationMode mode,
+    required int generation,
   }) async {
-    var render =
-        _ChunkRender(text: raw, accentColor: const Color(0xFF999999));
+    var render = _ChunkRender(text: raw, accentColor: const Color(0xFF999999));
+    var succeeded = false;
     try {
-      final service = AiTranslationService(
-        proxyUrl: _deepSeekProxyUrl,
-        appSecret: _appSecret,
-      );
+      final service =
+          widget.translationService ??
+          AiTranslationService(
+            proxyUrl: _deepSeekProxyUrl,
+            appSecret: _appSecret,
+          );
       final vocabJson = await service.fetchVocabJson(
         raw: raw,
         level: level,
@@ -1236,39 +1246,56 @@ class _ReadingScreenState extends State<ReadingScreen> {
       );
       if (vocabJson == null) return;
 
-      final wrapper = jsonEncode({
-        'level': level.label,
-        'mode': mode == TranslationMode.enToZh ? 'en_zh' : 'zh_en',
-        'data': jsonDecode(vocabJson),
-      });
-      await _writeCache(index, level.label, wrapper);
+      final cache = ReaderTranslationCache(directory: _cacheDirForBook());
+      final written = await cache.write(
+        index: index,
+        levelLabel: level.label,
+        mode: mode,
+        raw: raw,
+        vocabJson: vocabJson,
+      );
+      if (!written) return;
       final prefs = _prefs;
       if (prefs != null) {
-        unawaited(prefs.setString(_chunkFrozenLevelKey(index), level.label));
+        unawaited(
+          prefs.setString(_chunkFrozenLevelKey(index, mode: mode), level.label),
+        );
       }
 
       // Must render from cache content, not from network response, to guarantee
       // consistency with the persisted format.
-      final cached = _readCacheSyncFor(index, level.label);
-      if (cached != null) render = _renderFromCacheOrRaw(raw, cached);
+      if (generation != _translationGeneration || mode != _mode) return;
+      final cached = cache.read(
+        index: index,
+        levelLabel: level.label,
+        mode: mode,
+        raw: raw,
+      );
+      if (cached != null) {
+        render = _renderFromCacheOrRaw(raw, cached);
+        succeeded = true;
+      }
     } catch (error, stackTrace) {
       debugPrint('[ai] translate error=$error');
       debugPrintStack(stackTrace: stackTrace);
     } finally {
-      if (mounted) {
+      if (mounted && generation == _translationGeneration && mode == _mode) {
         final prevEffective = _rendered[index]?.text ?? raw;
+        final sourceAnchor = _readingSourceAnchor();
         setState(() {
           _inFlight.remove(index);
           if (_translatingCount > 0) _translatingCount -= 1;
-          _rendered[index] = render;
+          if (succeeded) {
+            _rendered[index] = render;
+            _failedChunks.remove(index);
+          } else {
+            _failedChunks.add(index);
+          }
         });
         if (_layoutDirection == _ReaderLayoutDirection.horizontal &&
             prevEffective != render.text) {
-          _scheduleHorizontalRepagination();
+          _scheduleHorizontalRepagination(anchor: sourceAnchor);
         }
-      } else {
-        _inFlight.remove(index);
-        if (_translatingCount > 0) _translatingCount -= 1;
       }
     }
   }
@@ -1307,72 +1334,63 @@ class _ReadingScreenState extends State<ReadingScreen> {
   }
 
   Future<void> _showLevelPicker() async {
-    final selected = _currentLevel;
-    await showCupertinoModalPopup<void>(
-      context: context,
-      builder: (context) {
-        return CupertinoActionSheet(
-          title: const Text('难度'),
-          message: const Text('边读边切换，不同段落会按当时难度着色混排并缓存'),
-          actions: [
-            for (final level in VocabularyLevel.values)
-              CupertinoActionSheetAction(
-                onPressed: () {
-                  _setLevel(level);
-                  Navigator.of(context).pop();
-                },
-                isDefaultAction: level == selected,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: getLevelColor(level.label),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(level.label),
-                  ],
-                ),
-              ),
-          ],
-          cancelButton: CupertinoActionSheetAction(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-        );
-      },
+    final selected = await showBookReaderChoices<VocabularyLevel>(
+      context,
+      title: '学习范围',
+      selected: _currentLevel,
+      isDark: _theme.background.computeLuminance() < 0.5,
+      choices: [
+        for (final level in VocabularyLevel.values)
+          BookReaderChoice(value: level, label: level.label),
+      ],
     );
+    if (selected != null && mounted) _setLevel(selected);
   }
 
   Future<void> _showModePicker() async {
-    final selected = _mode;
-    await showCupertinoModalPopup<void>(
-      context: context,
-      builder: (context) {
-        return CupertinoActionSheet(
-          title: const Text('翻译模式'),
-          actions: [
-            for (final m in TranslationMode.values)
-              CupertinoActionSheetAction(
-                onPressed: () {
-                  setState(() => _mode = m);
-                  Navigator.of(context).pop();
-                },
-                isDefaultAction: m == selected,
-                child: Text(m.label),
-              ),
-          ],
-          cancelButton: CupertinoActionSheetAction(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-        );
-      },
+    final selected = await showBookReaderChoices<TranslationMode>(
+      context,
+      title: '翻译方向',
+      selected: _mode,
+      isDark: _theme.background.computeLuminance() < 0.5,
+      choices: [
+        for (final mode in TranslationMode.values)
+          BookReaderChoice(value: mode, label: mode.label),
+      ],
     );
+    if (selected != null && mounted) _setMode(selected);
+  }
+
+  void _setMode(TranslationMode next) {
+    if (next == _mode) return;
+    final sourceAnchor = _readingSourceAnchor();
+    setState(() {
+      _mode = next;
+      _translationGeneration += 1;
+      _rendered.clear();
+      _inFlight.clear();
+      _failedChunks.clear();
+      _translatingCount = 0;
+      _pendingChunkLoads.clear();
+      _pendingAllowNetwork.clear();
+    });
+    if (_layoutDirection == _ReaderLayoutDirection.horizontal) {
+      _recomputeHorizontalPagination(
+        keepPageIndex: _anchorIndex,
+        sourceAnchor: sourceAnchor,
+      );
+    } else {
+      _requestChunkLoad(_anchorIndex, allowNetwork: true);
+      _requestChunkLoad(_anchorIndex + 1, allowNetwork: true);
+    }
+  }
+
+  void _retryFailedTranslations() {
+    final retry = _failedChunks.toList();
+    setState(_failedChunks.clear);
+    for (final index in retry) {
+      _requestChunkLoad(index, allowNetwork: true);
+    }
   }
 
   Widget _buildSelectionContextMenu(
@@ -1451,7 +1469,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
     if (!mounted || unitCount <= 0) return;
     setState(() => _chromeVisible = false);
 
-    final title = _book.title.trim().isEmpty ? '目录' : _book.title.trim();
+    final title = _book.displayTitle.trim().isEmpty
+        ? '目录'
+        : _book.displayTitle.trim();
     final here = _anchorIndex.clamp(0, math.max(0, unitCount - 1));
     final currentChapter = (here / _pagesPerChapter).floor();
     final chapterCount = (unitCount / _pagesPerChapter).ceil();
@@ -1511,8 +1531,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
                                       Navigator.of(ctx).pop();
                                       WidgetsBinding.instance
                                           .addPostFrameCallback((_) {
-                                        _jumpToUnit(start);
-                                      });
+                                            _jumpToUnit(start);
+                                          });
                                     },
                                     child: Container(
                                       padding: const EdgeInsets.fromLTRB(
@@ -1523,9 +1543,10 @@ class _ReadingScreenState extends State<ReadingScreen> {
                                       ),
                                       decoration: BoxDecoration(
                                         color: selected
-                                            ? CupertinoColors.white
-                                                .withValues(alpha: 0.92)
-                                            : const Color(0xFFF2F2F7),
+                                            ? CupertinoColors.white.withValues(
+                                                alpha: 0.92,
+                                              )
+                                            : LingferColors.background,
                                         borderRadius: BorderRadius.circular(18),
                                         border: Border.all(
                                           color: selected
@@ -1544,9 +1565,8 @@ class _ReadingScreenState extends State<ReadingScreen> {
                                                   '第${i + 1}章',
                                                   style: const TextStyle(
                                                     fontSize: 16,
-                                                    fontWeight:
-                                                        FontWeight.w800,
-                                                    color: Color(0xFF1C1C1E),
+                                                    fontWeight: FontWeight.w800,
+                                                    color: LingferColors.ink,
                                                     decoration:
                                                         TextDecoration.none,
                                                   ),
@@ -1556,7 +1576,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                                                   '第${start + 1}-$end页',
                                                   style: const TextStyle(
                                                     fontSize: 12,
-                                                    color: Color(0xFF8E8E93),
+                                                    color: LingferColors.muted,
                                                     decoration:
                                                         TextDecoration.none,
                                                   ),
@@ -1569,7 +1589,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                                             style: const TextStyle(
                                               fontSize: 16,
                                               fontWeight: FontWeight.w700,
-                                              color: Color(0xFF8E8E93),
+                                              color: LingferColors.muted,
                                               decoration: TextDecoration.none,
                                             ),
                                           ),
@@ -1597,8 +1617,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
   Future<void> _showMarksSheet({required int unitCount}) async {
     if (!mounted || unitCount <= 0) return;
     setState(() => _chromeVisible = false);
-    final title =
-        _book.title.trim().isEmpty ? '书签与高亮标记' : _book.title.trim();
+    final title = _book.displayTitle.trim().isEmpty
+        ? '书签与高亮标记'
+        : _book.displayTitle.trim();
 
     await showCupertinoModalPopup<void>(
       context: context,
@@ -1704,7 +1725,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                   ),
                   Positioned.fill(
                     child: Center(
-                      child: _CenterLoading(message: overlayMessage),
+                      child: _CenterLoading(message: overlayMessage, ink: ink),
                     ),
                   ),
                 ],
@@ -1717,25 +1738,12 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
     if (_loadError != null) {
       return shell(
-        content: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  child: const Text('返回'),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  '读取失败：$_loadError',
-                  style: TextStyle(color: ink, fontSize: 16, height: 1.6),
-                ),
-              ],
-            ),
-          ),
+        content: BookReadFailureView(
+          title: _book.displayTitle,
+          message: _loadError!,
+          isDark: bg.computeLuminance() < 0.5,
+          onBack: () => Navigator.of(context).maybePop(),
+          onRetry: _initBook,
         ),
       );
     }
@@ -1759,10 +1767,12 @@ class _ReadingScreenState extends State<ReadingScreen> {
     final unitCount = _layoutDirection == _ReaderLayoutDirection.vertical
         ? _allChunks.length
         : _pages.length;
-    final clampedUnitIndex =
-        unitCount <= 0 ? 0 : _anchorIndex.clamp(0, unitCount - 1);
-    final pageLabel =
-        unitCount <= 0 ? '' : '${clampedUnitIndex + 1}/$unitCount 页';
+    final clampedUnitIndex = unitCount <= 0
+        ? 0
+        : _anchorIndex.clamp(0, unitCount - 1);
+    final pageLabel = unitCount <= 0
+        ? ''
+        : '${clampedUnitIndex + 1}/$unitCount 页';
     final progressPercent = unitCount <= 0
         ? 0
         : (((clampedUnitIndex + 1) / unitCount) * 100).round().clamp(0, 100);
@@ -1773,7 +1783,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
       content: Stack(
         children: [
           DecoratedBox(
-                decoration: BoxDecoration(color: bg),
+            decoration: BoxDecoration(color: bg),
             child: material.SelectionArea(
               selectionControls: liquidCupertinoTextSelectionControls,
               contextMenuBuilder: _buildSelectionContextMenu,
@@ -1799,7 +1809,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                             if (index == _allChunks.length) {
                               final translating = _inFlight.isNotEmpty;
                               return translating
-                                  ? const _FooterLoading()
+                                  ? _FooterLoading(ink: ink)
                                   : const SizedBox(height: 60);
                             }
 
@@ -1810,12 +1820,13 @@ class _ReadingScreenState extends State<ReadingScreen> {
                             final raw = _allChunks[index];
                             final render = _rendered[index];
                             final text = render?.text ?? raw;
-                            final accentColor = render?.accentColor ??
-                                const Color(0xFF999999);
+                            final accentColor =
+                                render?.accentColor ?? const Color(0xFF999999);
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 16),
                               child: ReadingText(
                                 chunkText: text,
+                                annotations: render?.annotations ?? const [],
                                 accentColor: accentColor,
                                 fontSize: _fontSize,
                                 baseColor: ink,
@@ -1848,10 +1859,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                                     _unitIndex.value = index;
                                   }
                                   try {
-                                    await _prefs?.setInt(
-                                      _progressKey(),
-                                      index,
-                                    );
+                                    await _prefs?.setInt(_progressKey(), index);
                                   } catch (_) {}
                                   _requestChunksForPage(
                                     index,
@@ -1908,7 +1916,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
                     height: _persistentHudTop,
                     child: Center(
                       child: Text(
-                        _book.title.trim().isEmpty ? '阅读' : _book.title.trim(),
+                        _book.displayTitle.trim().isEmpty
+                            ? '阅读'
+                            : _book.displayTitle.trim(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1917,7 +1927,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                           letterSpacing: -0.1,
                           color: isDark
                               ? const Color(0xB3FFFFFF)
-                              : const Color(0xFF6E6E73),
+                              : LingferColors.muted,
                           decoration: TextDecoration.none,
                         ),
                       ),
@@ -1941,8 +1951,10 @@ class _ReadingScreenState extends State<ReadingScreen> {
                         valueListenable: _unitIndex,
                         builder: (context, idx, _) {
                           if (unitCount <= 0) return const SizedBox.shrink();
-                          final clamped =
-                              idx.clamp(0, math.max(0, unitCount - 1));
+                          final clamped = idx.clamp(
+                            0,
+                            math.max(0, unitCount - 1),
+                          );
                           return Text(
                             '${clamped + 1}/$unitCount 页',
                             style: TextStyle(
@@ -1950,7 +1962,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                               fontWeight: FontWeight.w600,
                               color: isDark
                                   ? const Color(0xB3FFFFFF)
-                                  : const Color(0xFF6E6E73),
+                                  : LingferColors.muted,
                               decoration: TextDecoration.none,
                             ),
                           );
@@ -1964,20 +1976,22 @@ class _ReadingScreenState extends State<ReadingScreen> {
           if (_chromeVisible && !_glassVisible && !_settingsVisible)
             Positioned.fill(
               child: _AppleBooksChromeOverlay(
-                title: _book.title,
+                title: _book.displayTitle,
                 pageLabel: pageLabel,
                 isDark: isDark,
                 currentLevel: _currentLevel,
                 mode: _mode,
                 directoryLabel: '目录 · $progressPercent%',
                 marksCount: _bookmarks.length + _highlights.length,
-                hasBookmark: unitCount > 0 &&
+                hasBookmark:
+                    unitCount > 0 &&
                     _bookmarks.containsKey(
                       clampedUnitIndex.clamp(0, math.max(0, unitCount - 1)),
                     ),
                 onBack: () => Navigator.of(context).maybePop(),
                 onDismiss: () => setState(() => _chromeVisible = false),
-                onOpenDirectory: () => _showDirectorySheet(unitCount: unitCount),
+                onOpenDirectory: () =>
+                    _showDirectorySheet(unitCount: unitCount),
                 onOpenMarks: () => _showMarksSheet(unitCount: unitCount),
                 onPickLevel: _showLevelPicker,
                 onPickMode: _showModePicker,
@@ -1999,46 +2013,72 @@ class _ReadingScreenState extends State<ReadingScreen> {
             onFontSizeChanged: (v) => _setFontSize(v),
             onLayoutDirectionChanged: _setLayoutDirection,
           ),
-	          Positioned(
-	            right: 0,
-	            bottom: 0,
-	            child: SafeArea(
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: SafeArea(
               top: false,
               left: false,
               child: Padding(
                 padding: const EdgeInsets.only(right: 20, bottom: 40),
                 child: IgnorePointer(
-                  ignoring: true,
-                  child: AnimatedOpacity(
-                    duration: const Duration(milliseconds: 300),
-                    opacity: _translatingCount > 0 ? 1.0 : 0.0,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(30),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: CupertinoColors.white.withValues(alpha: 0.72),
-                            borderRadius: BorderRadius.circular(30),
-                            border: Border.all(color: const Color(0x11000000)),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              CupertinoActivityIndicator(radius: 8),
-                              SizedBox(width: 8),
-                              Text(
-                                'AI 解析中...',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF1C1C1E),
-                                ),
+                  ignoring:
+                      _failedChunks.isEmpty ||
+                      _chromeVisible ||
+                      _settingsVisible ||
+                      _glassVisible,
+                  child: GestureDetector(
+                    onTap: _retryFailedTranslations,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 300),
+                      opacity:
+                          (_translatingCount > 0 || _failedChunks.isNotEmpty) &&
+                              !_chromeVisible &&
+                              !_settingsVisible &&
+                              !_glassVisible
+                          ? 1.0
+                          : 0.0,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(30),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: CupertinoColors.white.withValues(
+                                alpha: 0.72,
                               ),
-                            ],
+                              borderRadius: BorderRadius.circular(30),
+                              border: Border.all(
+                                color: const Color(0x11000000),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_translatingCount > 0)
+                                  const CupertinoActivityIndicator(radius: 8)
+                                else
+                                  const Icon(
+                                    CupertinoIcons.refresh,
+                                    size: 15,
+                                    color: LingferColors.accent,
+                                  ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _translatingCount > 0
+                                      ? '正在生成注释…'
+                                      : '注释暂未生成 · 点此重试',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: LingferColors.ink,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -2046,22 +2086,22 @@ class _ReadingScreenState extends State<ReadingScreen> {
                   ),
                 ),
               ),
-	            ),
-	          ),
-		          if (_glassVisible)
-		            Positioned.fill(
-		              child: AppleGlassPanel(
-		                selectedTextListenable: _glassSelectedText,
-		                dock: _glassDock,
-		                initialLevel: _currentLevel,
-		                ai: _aiGlass,
-		                onDismiss: () => setState(() => _glassVisible = false),
-		              ),
-		            ),
-	        ],
-	      ),
-	    );
-	  }
+            ),
+          ),
+          if (_glassVisible)
+            Positioned.fill(
+              child: AppleGlassPanel(
+                selectedTextListenable: _glassSelectedText,
+                dock: _glassDock,
+                initialLevel: _currentLevel,
+                ai: _aiGlass,
+                onDismiss: () => setState(() => _glassVisible = false),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   double _topPadding(BuildContext context) {
     final topInset = MediaQuery.paddingOf(context).top;
@@ -2112,7 +2152,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                   style: const TextStyle(
                     decoration: TextDecoration.none,
                     fontFamily: '.SF UI Text',
-                    color: Color(0xFF1C1C1E),
+                    color: LingferColors.ink,
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(999),
@@ -2124,8 +2164,9 @@ class _ReadingScreenState extends State<ReadingScreen> {
                           vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color:
-                              CupertinoColors.systemGrey6.withValues(alpha: 0.86),
+                          color: CupertinoColors.systemGrey6.withValues(
+                            alpha: 0.86,
+                          ),
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(color: const Color(0x1A000000)),
                           boxShadow: const [
@@ -2142,7 +2183,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             decoration: TextDecoration.none,
-                            color: Color(0xFF1C1C1E),
+                            color: LingferColors.ink,
                           ),
                         ),
                       ),
@@ -2309,17 +2350,14 @@ class _AppleBooksChromeOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
-    final fg = isDark ? CupertinoColors.white : const Color(0xFF1C1C1E);
-    final sub = isDark ? const Color(0xB3FFFFFF) : const Color(0xFF6E6E73);
+    final fg = isDark ? const Color(0xFFF4F4F0) : LingferColors.ink;
+    final sub = isDark ? const Color(0xFFB2BCBD) : LingferColors.muted;
     final panelBg = isDark
-        ? const Color(0xCC2C2C2E)
+        ? const Color(0xED252D2F)
         : CupertinoColors.white.withValues(alpha: 0.86);
-    final panelBorder =
-        isDark ? const Color(0x1FFFFFFF) : const Color(0x14000000);
-    final iconBg =
-        isDark ? const Color(0x22FFFFFF) : const Color(0x12000000);
-    final iconBorder =
-        isDark ? const Color(0x14FFFFFF) : const Color(0x14000000);
+    final panelBorder = isDark ? const Color(0xFF465254) : LingferColors.line;
+    final iconBg = isDark ? const Color(0xFF344347) : LingferColors.tint;
+    final scale = mq.textScaler.scale(14) / 14;
 
     return Stack(
       children: [
@@ -2335,41 +2373,39 @@ class _AppleBooksChromeOverlay extends StatelessWidget {
           top: 0,
           child: SafeArea(
             bottom: false,
-            child: SizedBox(
-              height: 52,
-              child: Row(
-                children: [
-                  _GlassCircleButton(
-                    icon: CupertinoIcons.chevron_left,
-                    foreground: fg,
-                    background: panelBg,
-                    border: panelBorder,
-                    onPressed: onBack,
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        title.trim().isEmpty ? '阅读' : title.trim(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: sub,
-                          decoration: TextDecoration.none,
-                        ),
+            child: Row(
+              children: [
+                _GlassCircleButton(
+                  icon: CupertinoIcons.chevron_left,
+                  foreground: fg,
+                  background: panelBg,
+                  border: panelBorder,
+                  onPressed: onBack,
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      title.trim().isEmpty ? '阅读' : title.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: sub,
                       ),
                     ),
                   ),
-                  _GlassCircleButton(
-                    icon: CupertinoIcons.xmark,
-                    foreground: fg,
-                    background: panelBg,
-                    border: panelBorder,
-                    onPressed: onDismiss,
-                  ),
-                ],
-              ),
+                ),
+                _GlassCircleButton(
+                  icon: CupertinoIcons.xmark,
+                  foreground: fg,
+                  background: panelBg,
+                  border: panelBorder,
+                  onPressed: onDismiss,
+                ),
+              ],
             ),
           ),
         ),
@@ -2377,102 +2413,119 @@ class _AppleBooksChromeOverlay extends StatelessWidget {
           left: 16,
           right: 16,
           bottom: 54 + mq.padding.bottom,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-                decoration: BoxDecoration(
-                  color: panelBg,
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: panelBorder),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x14000000),
-                      blurRadius: 32,
-                      offset: Offset(0, 18),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _ChromePillButton(
-                            icon: CupertinoIcons.list_bullet,
-                            label: directoryLabel,
-                            foreground: fg,
-                            iconBackground: iconBg,
-                            iconBorder: iconBorder,
-                            onPressed: onOpenDirectory,
-                          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 580,
+                maxHeight: mq.size.height * 0.64,
+              ),
+              child: BookReaderControlSurface(
+                isDark: isDark,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '阅读工具',
+                        style: LingferType.interfaceHeading.copyWith(
+                          fontSize: 18,
+                          color: fg,
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _ChromePillButton(
-                            icon: CupertinoIcons.bookmark,
-                            label: '书签与高亮标记',
-                            trailing: marksCount > 0 ? '$marksCount' : null,
-                            foreground: fg,
-                            iconBackground: iconBg,
-                            iconBorder: iconBorder,
-                            onPressed: onOpenMarks,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _ChromeActionButton(
-                            icon: CupertinoIcons.slider_horizontal_3,
-                            label: currentLevel.label,
-                            foreground: fg,
-                            iconBackground: iconBg,
-                            iconBorder: iconBorder,
-                            onPressed: onPickLevel,
-                          ),
-                        ),
-                        Expanded(
-                          child: _ChromeActionButton(
-                            icon: CupertinoIcons.arrow_right_arrow_left,
-                            label: mode.label,
-                            foreground: fg,
-                            iconBackground: iconBg,
-                            iconBorder: iconBorder,
-                            onPressed: onPickMode,
-                          ),
-                        ),
-                        Expanded(
-                          child: _ChromeActionButton(
-                            icon: hasBookmark
-                                ? CupertinoIcons.bookmark_fill
-                                : CupertinoIcons.bookmark,
-                            label: '书签',
-                            foreground: fg,
-                            iconBackground: iconBg,
-                            iconBorder: iconBorder,
-                            active: hasBookmark,
-                            onPressed: onToggleBookmark,
-                          ),
-                        ),
-                        Expanded(
-                          child: _ChromeActionButton(
-                            icon: CupertinoIcons.textformat_size,
-                            label: '主题与设置',
-                            foreground: fg,
-                            iconBackground: iconBg,
-                            iconBorder: iconBorder,
-                            onPressed: onOpenSettings,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 14),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final columns =
+                              constraints.maxWidth < 390 || scale > 1.3 ? 1 : 2;
+                          final width =
+                              (constraints.maxWidth - (columns - 1) * 10) /
+                              columns;
+                          return Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              SizedBox(
+                                width: width,
+                                child: _ChromePillButton(
+                                  icon: CupertinoIcons.list_bullet,
+                                  label: directoryLabel,
+                                  foreground: fg,
+                                  iconBackground: iconBg,
+                                  iconBorder: panelBorder,
+                                  onPressed: onOpenDirectory,
+                                ),
+                              ),
+                              SizedBox(
+                                width: width,
+                                child: _ChromePillButton(
+                                  icon: CupertinoIcons.bookmark,
+                                  label: '书签与高亮',
+                                  trailing: marksCount > 0
+                                      ? '$marksCount'
+                                      : null,
+                                  foreground: fg,
+                                  iconBackground: iconBg,
+                                  iconBorder: panelBorder,
+                                  onPressed: onOpenMarks,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Container(height: 1, color: panelBorder),
+                      const SizedBox(height: 14),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final columns =
+                              constraints.maxWidth < 320 || scale > 1.3 ? 1 : 2;
+                          final width =
+                              (constraints.maxWidth - (columns - 1) * 8) /
+                              columns;
+                          final actions = [
+                            BookReaderActionChip(
+                              icon: CupertinoIcons.slider_horizontal_3,
+                              label: currentLevel.label,
+                              isDark: isDark,
+                              onPressed: onPickLevel,
+                            ),
+                            BookReaderActionChip(
+                              icon: CupertinoIcons.arrow_right_arrow_left,
+                              label: mode.label,
+                              isDark: isDark,
+                              onPressed: onPickMode,
+                            ),
+                            BookReaderActionChip(
+                              icon: hasBookmark
+                                  ? CupertinoIcons.bookmark_fill
+                                  : CupertinoIcons.bookmark,
+                              label: hasBookmark ? '已加书签' : '添加书签',
+                              isDark: isDark,
+                              active: hasBookmark,
+                              onPressed: onToggleBookmark,
+                            ),
+                            BookReaderActionChip(
+                              icon: CupertinoIcons.textformat_size,
+                              label: '字号与外观',
+                              isDark: isDark,
+                              onPressed: onOpenSettings,
+                            ),
+                          ];
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final action in actions)
+                                SizedBox(width: width, child: action),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -2489,74 +2542,14 @@ class _AppleBooksChromeOverlay extends StatelessWidget {
                   pageLabel,
                   style: TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                     color: sub,
-                    decoration: TextDecoration.none,
                   ),
                 ),
               ),
             ),
           ),
       ],
-    );
-  }
-}
-
-class _ChromeActionButton extends StatelessWidget {
-  const _ChromeActionButton({
-    required this.icon,
-    required this.label,
-    required this.foreground,
-    required this.iconBackground,
-    required this.iconBorder,
-    required this.onPressed,
-    this.active = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color foreground;
-  final Color iconBackground;
-  final Color iconBorder;
-  final VoidCallback onPressed;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    final iconColor = active
-        ? const Color(0xFF0A84FF)
-        : foreground.withValues(alpha: 0.9);
-    return CupertinoButton(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      onPressed: onPressed,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: iconBackground,
-              border: Border.all(color: iconBorder),
-            ),
-            child: Icon(icon, size: 22, color: iconColor),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: foreground.withValues(alpha: 0.82),
-              decoration: TextDecoration.none,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -2587,12 +2580,12 @@ class _ChromePillButton extends StatelessWidget {
       padding: EdgeInsets.zero,
       onPressed: onPressed,
       child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: CupertinoColors.white.withValues(alpha: 0.70),
+          color: iconBackground.withValues(alpha: 0.48),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0x11000000)),
+          border: Border.all(color: iconBorder),
         ),
         child: Row(
           children: [
@@ -2610,7 +2603,7 @@ class _ChromePillButton extends StatelessWidget {
             Expanded(
               child: Text(
                 label,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 14,
@@ -2700,10 +2693,10 @@ class _HighlightMark {
   final String excerpt;
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'i': unitIndex,
-        't': createdAtMs,
-        'x': excerpt,
-      };
+    'i': unitIndex,
+    't': createdAtMs,
+    'x': excerpt,
+  };
 
   static _HighlightMark? fromJson(Map raw) {
     final i = raw['i'];
@@ -2745,7 +2738,7 @@ class _SheetTopBar extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
           border: Border.all(color: const Color(0x11000000)),
         ),
-        child: Icon(icon, size: 18, color: const Color(0xFF1C1C1E)),
+        child: Icon(icon, size: 18, color: LingferColors.ink),
       ),
     );
   }
@@ -2767,16 +2760,13 @@ class _SheetTopBar extends StatelessWidget {
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
                   letterSpacing: -0.2,
-                  color: Color(0xFF1C1C1E),
+                  color: LingferColors.ink,
                   decoration: TextDecoration.none,
                 ),
               ),
             ),
           ),
-          _circleButton(
-            icon: CupertinoIcons.check_mark,
-            onPressed: onDone,
-          ),
+          _circleButton(icon: CupertinoIcons.check_mark, onPressed: onDone),
         ],
       ),
     );
@@ -2813,17 +2803,16 @@ class _MarksSheetState extends State<_MarksSheet> {
   String _dayLabel(int createdAtMs) {
     final d = DateTime.fromMillisecondsSinceEpoch(createdAtMs);
     final now = DateTime.now();
-    final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
+    final sameDay =
+        d.year == now.year && d.month == now.month && d.day == now.day;
     if (sameDay) return '今天';
     return '${d.month}/${d.day}';
   }
 
-  Widget _card({
-    required Widget child,
-  }) {
+  Widget _card({required Widget child}) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F2F7),
+        color: LingferColors.background,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0x11000000)),
       ),
@@ -2861,7 +2850,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF1C1C1E),
+                    color: LingferColors.ink,
                     decoration: TextDecoration.none,
                     fontFamily: '.SF UI Text',
                   ),
@@ -2874,7 +2863,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF1C1C1E),
+                    color: LingferColors.ink,
                     decoration: TextDecoration.none,
                     fontFamily: '.SF UI Text',
                   ),
@@ -2900,7 +2889,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                         '暂无书签',
                         style: TextStyle(
                           fontSize: 14,
-                          color: Color(0xFF8E8E93),
+                          color: LingferColors.muted,
                           decoration: TextDecoration.none,
                         ),
                       ),
@@ -2913,7 +2902,8 @@ class _MarksSheetState extends State<_MarksSheet> {
                     itemBuilder: (context, idx) {
                       final unit = bookmarks[idx].key;
                       final createdAt = bookmarks[idx].value;
-                      final chapter = (unit / widget.pagesPerChapter).floor() + 1;
+                      final chapter =
+                          (unit / widget.pagesPerChapter).floor() + 1;
                       final day = _dayLabel(createdAt);
                       return CupertinoButton(
                         padding: EdgeInsets.zero,
@@ -2925,14 +2915,15 @@ class _MarksSheetState extends State<_MarksSheet> {
                               children: [
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         '第$chapter章',
                                         style: const TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w800,
-                                          color: Color(0xFF1C1C1E),
+                                          color: LingferColors.ink,
                                           decoration: TextDecoration.none,
                                         ),
                                       ),
@@ -2941,7 +2932,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                                         day,
                                         style: const TextStyle(
                                           fontSize: 12,
-                                          color: Color(0xFF8E8E93),
+                                          color: LingferColors.muted,
                                           decoration: TextDecoration.none,
                                         ),
                                       ),
@@ -2953,7 +2944,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                                   style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFF8E8E93),
+                                    color: LingferColors.muted,
                                     decoration: TextDecoration.none,
                                   ),
                                 ),
@@ -2972,7 +2963,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                       '暂无高亮标记',
                       style: TextStyle(
                         fontSize: 14,
-                        color: Color(0xFF8E8E93),
+                        color: LingferColors.muted,
                         decoration: TextDecoration.none,
                       ),
                     ),
@@ -2985,7 +2976,8 @@ class _MarksSheetState extends State<_MarksSheet> {
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, idx) {
                     final m = highlights[idx];
-                    final chapter = (m.unitIndex / widget.pagesPerChapter).floor() + 1;
+                    final chapter =
+                        (m.unitIndex / widget.pagesPerChapter).floor() + 1;
                     final day = _dayLabel(m.createdAtMs);
                     return CupertinoButton(
                       padding: EdgeInsets.zero,
@@ -3008,7 +3000,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                                         fontSize: 15,
                                         fontWeight: FontWeight.w700,
                                         height: 1.25,
-                                        color: Color(0xFF1C1C1E),
+                                        color: LingferColors.ink,
                                         decoration: TextDecoration.none,
                                       ),
                                     ),
@@ -3017,7 +3009,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                                       '第$chapter章 · $day',
                                       style: const TextStyle(
                                         fontSize: 12,
-                                        color: Color(0xFF8E8E93),
+                                        color: LingferColors.muted,
                                         decoration: TextDecoration.none,
                                       ),
                                     ),
@@ -3030,7 +3022,7 @@ class _MarksSheetState extends State<_MarksSheet> {
                                 style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w700,
-                                  color: Color(0xFF8E8E93),
+                                  color: LingferColors.muted,
                                   decoration: TextDecoration.none,
                                 ),
                               ),
@@ -3051,11 +3043,18 @@ class _MarksSheetState extends State<_MarksSheet> {
 }
 
 class _ChunkRender {
-  const _ChunkRender({required this.text, required this.accentColor});
+  const _ChunkRender({
+    required this.text,
+    required this.accentColor,
+    this.annotations = const [],
+  });
 
   final String text;
   final Color accentColor;
+  final List<ReaderAnnotationSpan> annotations;
 }
+
+typedef _ReaderAnchor = ({int chunk, int sourceOffset});
 
 class _PageSlice {
   const _PageSlice(this.start, this.end);
@@ -3065,12 +3064,12 @@ class _PageSlice {
 }
 
 class _FooterLoading extends StatelessWidget {
-  const _FooterLoading();
+  const _FooterLoading({required this.ink});
+  final Color ink;
 
   @override
   Widget build(BuildContext context) {
-    const ink = Color(0xFF2B2B2B);
-    return const Padding(
+    return Padding(
       padding: EdgeInsets.symmetric(vertical: 18),
       child: Center(
         child: Column(
@@ -3079,7 +3078,7 @@ class _FooterLoading extends StatelessWidget {
             CupertinoActivityIndicator(),
             SizedBox(height: 10),
             Text(
-              'AI 正在翻译下一段...',
+              '正在补充下一段译文…',
               style: TextStyle(color: ink, fontSize: 14, height: 1.3),
             ),
           ],
@@ -3212,9 +3211,8 @@ enum _ReaderLayoutDirection {
   vertical,
   horizontal;
 
-  String toPrefs() => this == _ReaderLayoutDirection.horizontal
-      ? 'horizontal'
-      : 'vertical';
+  String toPrefs() =>
+      this == _ReaderLayoutDirection.horizontal ? 'horizontal' : 'vertical';
 }
 
 class _FrostedOverlay extends StatelessWidget {
@@ -3232,21 +3230,18 @@ class _FrostedOverlay extends StatelessWidget {
 }
 
 class _CenterLoading extends StatelessWidget {
-  const _CenterLoading({required this.message});
+  const _CenterLoading({required this.message, this.ink = LingferColors.ink});
   final String message;
+  final Color ink;
 
   @override
   Widget build(BuildContext context) {
-    const ink = Color(0xFF2B2B2B);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const CupertinoActivityIndicator(),
         const SizedBox(height: 12),
-        Text(
-          message,
-          style: const TextStyle(color: ink, fontSize: 16, height: 1.4),
-        ),
+        Text(message, style: TextStyle(color: ink, fontSize: 16, height: 1.4)),
       ],
     );
   }
@@ -3277,239 +3272,152 @@ class _ReaderSettingsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = isDark ? CupertinoColors.white : const Color(0xFF1C1C1E);
-    final sub = isDark ? const Color(0xB3FFFFFF) : const Color(0xFF6E6E73);
-    final sheetBg =
-        isDark ? const Color(0xCC1C1C1E) : CupertinoColors.white.withValues(alpha: 0.88);
-    final border = isDark ? const Color(0x22FFFFFF) : const Color(0x14000000);
-    final barrier = isDark ? const Color(0x66000000) : const Color(0x33000000);
+    final fg = isDark ? const Color(0xFFF4F4F0) : LingferColors.ink;
+    final sub = isDark ? const Color(0xFFB2BCBD) : LingferColors.muted;
+    final accent = isDark ? const Color(0xFFB1CED2) : LingferColors.accent;
+    final field = isDark ? const Color(0xFF344347) : LingferColors.tint;
+    final mq = MediaQuery.of(context);
+    final scale = mq.textScaler.scale(14) / 14;
+    final duration = mq.disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
 
     Future<void> openLayoutPicker() async {
-      await showCupertinoModalPopup<void>(
-        context: context,
-        builder: (ctx) {
-          return CupertinoActionSheet(
-            title: const Text('排版方向'),
-            actions: [
-              CupertinoActionSheetAction(
-                isDefaultAction:
-                    layoutDirection == _ReaderLayoutDirection.horizontal,
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  onLayoutDirectionChanged(_ReaderLayoutDirection.horizontal);
-                },
-                child: const Text('横向翻页'),
-              ),
-              CupertinoActionSheetAction(
-                isDefaultAction:
-                    layoutDirection == _ReaderLayoutDirection.vertical,
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  onLayoutDirectionChanged(_ReaderLayoutDirection.vertical);
-                },
-                child: const Text('竖向滑动'),
-              ),
-            ],
-            cancelButton: CupertinoActionSheetAction(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('取消'),
-            ),
-          );
-        },
+      final selected = await showBookReaderChoices<_ReaderLayoutDirection>(
+        context,
+        title: '排版方向',
+        selected: layoutDirection,
+        isDark: isDark,
+        choices: const [
+          BookReaderChoice(
+            value: _ReaderLayoutDirection.horizontal,
+            label: '横向翻页',
+          ),
+          BookReaderChoice(
+            value: _ReaderLayoutDirection.vertical,
+            label: '竖向滑动',
+          ),
+        ],
       );
+      if (selected != null) onLayoutDirectionChanged(selected);
     }
 
-    final sheet = ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: sheetBg,
-            border: Border.all(color: border),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 42,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0x33FFFFFF)
-                            : const Color(0x33000000),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '主题与设置',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.2,
-                            color: fg,
-                            decoration: TextDecoration.none,
-                          ),
+    final sheet = ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: 620,
+        maxHeight: mq.size.height * 0.88,
+      ),
+      child: BookReaderControlSurface(
+        isDark: isDark,
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(22, 14, 22, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '字号与外观',
+                        style: LingferType.interfaceHeading.copyWith(
+                          fontSize: 18,
+                          color: fg,
                         ),
                       ),
-                      CupertinoButton(
+                    ),
+                    Semantics(
+                      label: '关闭阅读设置',
+                      button: true,
+                      child: CupertinoButton(
                         padding: EdgeInsets.zero,
-                        minimumSize: const Size(40, 40),
+                        minimumSize: const Size(48, 48),
                         onPressed: onClose,
-                        child: Icon(
-                          CupertinoIcons.xmark_circle_fill,
-                          size: 28,
-                          color: isDark
-                              ? const Color(0x66FFFFFF)
-                              : const Color(0xFFAEAEB2),
-                        ),
+                        child: Icon(CupertinoIcons.xmark, color: sub, size: 20),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _FontSizePill(
-                          fontSize: fontSize,
-                          foreground: fg,
-                          background: isDark
-                              ? const Color(0x1FFFFFFF)
-                              : const Color(0x12000000),
-                          onSmaller: () => onFontSizeChanged(fontSize - 1),
-                          onLarger: () => onFontSizeChanged(fontSize + 1),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      _QuickPill(
-                        icon: CupertinoIcons.list_bullet,
-                        label: layoutDirection ==
-                                _ReaderLayoutDirection.horizontal
-                            ? '翻页'
-                            : '滑动',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _FontSizePill(
+                        fontSize: fontSize,
                         foreground: fg,
-                        background: isDark
-                            ? const Color(0x1FFFFFFF)
-                            : const Color(0x12000000),
-                        onPressed: openLayoutPicker,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(CupertinoIcons.textformat_size, size: 16, color: sub),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: CupertinoSlider(
-                          value: fontSize.clamp(14, 26),
-                          min: 14,
-                          max: 26,
-                          onChanged: onFontSizeChanged,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Icon(
-                        CupertinoIcons.textformat_size,
-                        size: 20,
-                        color: sub,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    '主题',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: fg,
-                      decoration: TextDecoration.none,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  GridView.count(
-                    crossAxisCount: 3,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 1.05,
-                    children: [
-                      for (final t in ReaderTheme.all)
-                        _ThemeTile(
-                          theme: t,
-                          selected: t.kind == theme.kind,
-                          isDark: isDark,
-                          onPressed: () => onThemeChanged(t),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    onPressed: () {
-                      showCupertinoDialog<void>(
-                        context: context,
-                        builder: (ctx) => CupertinoAlertDialog(
-                          title: const Text('自定义主题'),
-                          content: const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: Text('该功能正在打磨中，即将开放。'),
-                          ),
-                          actions: [
-                            CupertinoDialogAction(
-                              onPressed: () => Navigator.of(ctx).pop(),
-                              child: const Text('知道了'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                    child: Container(
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0x1FFFFFFF)
-                            : const Color(0x12000000),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0x11000000)),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            CupertinoIcons.gear,
-                            size: 18,
-                            color: fg,
-                          ),
-                          SizedBox(width: 10),
-                          Text(
-                            '自定义',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: fg,
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                        ],
+                        background: field,
+                        onSmaller: () => onFontSizeChanged(fontSize - 1),
+                        onLarger: () => onFontSizeChanged(fontSize + 1),
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    _QuickPill(
+                      icon: CupertinoIcons.book,
+                      label:
+                          layoutDirection == _ReaderLayoutDirection.horizontal
+                          ? '翻页'
+                          : '滑动',
+                      foreground: fg,
+                      background: field,
+                      onPressed: openLayoutPicker,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(CupertinoIcons.textformat_size, size: 16, color: sub),
+                    Expanded(
+                      child: CupertinoSlider(
+                        value: fontSize.clamp(14, 26),
+                        min: 14,
+                        max: 26,
+                        activeColor: accent,
+                        onChanged: onFontSizeChanged,
+                      ),
+                    ),
+                    Icon(CupertinoIcons.textformat_size, size: 22, color: sub),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  '纸面',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: sub,
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = scale > 2.3
+                        ? 1
+                        : (constraints.maxWidth < 360 || scale > 1.3 ? 2 : 3);
+                    final width =
+                        (constraints.maxWidth - (columns - 1) * 12) / columns;
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final t in ReaderTheme.all)
+                          SizedBox(
+                            width: width,
+                            height: 102 + math.max(0, scale - 1) * 34,
+                            child: _ThemeTile(
+                              theme: t,
+                              selected: t.kind == theme.kind,
+                              isDark: isDark,
+                              onPressed: () => onThemeChanged(t),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ],
             ),
           ),
         ),
@@ -3519,7 +3427,7 @@ class _ReaderSettingsSheet extends StatelessWidget {
     return IgnorePointer(
       ignoring: !visible,
       child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 180),
+        duration: duration,
         opacity: visible ? 1 : 0,
         child: Stack(
           children: [
@@ -3527,16 +3435,19 @@ class _ReaderSettingsSheet extends StatelessWidget {
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onTap: onClose,
-                child: Container(color: barrier),
+                child: Container(color: const Color(0x33000000)),
               ),
             ),
             Align(
               alignment: Alignment.bottomCenter,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                offset: visible ? Offset.zero : const Offset(0, 0.12),
-                child: sheet,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: AnimatedSlide(
+                  duration: duration,
+                  curve: Curves.easeOutCubic,
+                  offset: visible ? Offset.zero : const Offset(0, 0.12),
+                  child: sheet,
+                ),
               ),
             ),
           ],
@@ -3564,7 +3475,10 @@ class _FontSizePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 44,
+      height: math.max(
+        48,
+        MediaQuery.textScalerOf(context).scale(13) * 1.4 + 16,
+      ),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(18),
@@ -3580,7 +3494,7 @@ class _FontSizePill extends StatelessWidget {
                 '小',
                 style: TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: foreground,
                   decoration: TextDecoration.none,
                 ),
@@ -3596,7 +3510,7 @@ class _FontSizePill extends StatelessWidget {
                 '大',
                 style: TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: foreground,
                   decoration: TextDecoration.none,
                 ),
@@ -3630,7 +3544,10 @@ class _QuickPill extends StatelessWidget {
       padding: EdgeInsets.zero,
       onPressed: onPressed,
       child: Container(
-        height: 44,
+        height: math.max(
+          48,
+          MediaQuery.textScalerOf(context).scale(13) * 1.4 + 16,
+        ),
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
           color: background,
@@ -3646,7 +3563,7 @@ class _QuickPill extends StatelessWidget {
               label,
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w500,
                 color: foreground,
                 decoration: TextDecoration.none,
               ),
@@ -3679,7 +3596,7 @@ class _ThemeTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final labelColor = isDark ? CupertinoColors.white : const Color(0xFF1C1C1E);
+    final labelColor = theme.textColor;
     return CupertinoButton(
       padding: EdgeInsets.zero,
       onPressed: onPressed,
@@ -3689,7 +3606,7 @@ class _ThemeTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: selected
-                ? const Color(0xFF0A84FF)
+                ? (isDark ? const Color(0xFFB1CED2) : LingferColors.accent)
                 : (isDark ? const Color(0x22FFFFFF) : const Color(0x22000000)),
             width: selected ? 2 : 1,
           ),
@@ -3707,10 +3624,10 @@ class _ThemeTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '大小',
+                '阅读',
                 style: TextStyle(
                   fontSize: 22,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w500,
                   color: theme.textColor,
                   decoration: TextDecoration.none,
                 ),
@@ -3723,7 +3640,7 @@ class _ThemeTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: labelColor.withValues(alpha: 0.78),
+                  color: labelColor,
                   decoration: TextDecoration.none,
                 ),
               ),
@@ -3816,7 +3733,7 @@ class _PillToggle extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF0A84FF) : const Color(0xFFF2F2F7),
+          color: selected ? LingferColors.accent : LingferColors.background,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected ? const Color(0x330A84FF) : const Color(0x11000000),
@@ -3828,7 +3745,7 @@ class _PillToggle extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: selected ? CupertinoColors.white : const Color(0xFF1C1C1E),
+              color: selected ? CupertinoColors.white : LingferColors.ink,
             ),
           ),
         ),

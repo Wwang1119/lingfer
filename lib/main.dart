@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -6,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/app_state.dart';
 import 'app/lens_app.dart';
+import 'features/companion/lingfer_theme.dart';
 
 void main() {
   // Force-disable any debug visualizers (especially baselines) that can show up
@@ -43,23 +43,8 @@ class _LingferRootState extends State<LingferRoot> {
     super.dispose();
   }
 
-  static const Color _actionTint = Color(0xFF3D3A34);
-  static const Color _liquidSelectionColor = Color(0x40D1D1D6);
-  static const Color _appleSystemGray = Color(0xFF8E8E93);
-  static const Color _handleDeepSpace = Color(0xFF3A3A3C);
-
   @override
   Widget build(BuildContext context) {
-    final baseTextTheme = ThemeData.light().textTheme.apply(
-      fontFamilyFallback: const ['.SF UI Text', '.SF Pro Text', 'PingFang SC'],
-    );
-    const bodyPolish = TextStyle(height: 1.6, letterSpacing: 0.5);
-    final polishedTextTheme = baseTextTheme.copyWith(
-      bodyLarge: baseTextTheme.bodyLarge?.merge(bodyPolish),
-      bodyMedium: baseTextTheme.bodyMedium?.merge(bodyPolish),
-      bodySmall: baseTextTheme.bodySmall?.merge(bodyPolish),
-    );
-
     return AppScope(
       state: _state,
       child: MaterialApp(
@@ -72,25 +57,8 @@ class _LingferRootState extends State<LingferRoot> {
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
         ],
-        supportedLocales: const [
-          Locale('zh'),
-          Locale('en'),
-        ],
-        theme: ThemeData(
-          platform: TargetPlatform.iOS,
-          fontFamilyFallback: const ['.SF UI Text', '.SF Pro Text', 'PingFang SC'],
-          textTheme: polishedTextTheme,
-          textSelectionTheme: const TextSelectionThemeData(
-            cursorColor: _appleSystemGray,
-            selectionColor: _liquidSelectionColor,
-            selectionHandleColor: _handleDeepSpace,
-          ),
-          cupertinoOverrideTheme: const CupertinoThemeData(
-            brightness: Brightness.light,
-            primaryColor: _actionTint,
-            selectionHandleColor: _handleDeepSpace,
-          ),
-        ),
+        supportedLocales: const [Locale('zh'), Locale('en')],
+        theme: lingferTheme(),
         home: LensAppHost(state: _state),
       ),
     );
@@ -102,10 +70,10 @@ class LingferScrollBehavior extends MaterialScrollBehavior {
 
   @override
   Set<PointerDeviceKind> get dragDevices => const {
-        PointerDeviceKind.touch,
-        PointerDeviceKind.mouse,
-        PointerDeviceKind.trackpad,
-        PointerDeviceKind.stylus,
-        PointerDeviceKind.invertedStylus,
-      };
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+  };
 }

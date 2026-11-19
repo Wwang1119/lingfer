@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' as material;
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../../models/book.dart';
+import '../../widgets/book_display_title.dart';
 import '../../services/ai_translation_service.dart';
 import '../../widgets/apple_glass_sheet.dart';
 
@@ -111,7 +112,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   Widget build(BuildContext context) {
     const bg = Color(0xFFF6F4EE);
     final widgetTitle =
-        widget.book.title.trim().isEmpty ? 'PDF' : widget.book.title.trim();
+        widget.book.displayTitle.trim().isEmpty ? 'PDF' : widget.book.displayTitle.trim();
 
     final viewer = switch (widget.book.source) {
       BookSource.asset => SfPdfViewer.asset(

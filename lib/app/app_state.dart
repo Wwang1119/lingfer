@@ -10,14 +10,14 @@ class AppState extends ChangeNotifier {
   static const _shelfKey = 'lens_shelf_v2';
 
   SharedPreferences? _prefs;
-  bool _initialized = false;
+  Future<void>? _initialization;
 
   final List<Book> _shelf = <Book>[];
   List<Book> get shelf => List<Book>.unmodifiable(_shelf);
 
-  Future<void> initialize() async {
-    if (_initialized) return;
-    _initialized = true;
+  Future<void> initialize() => _initialization ??= _initialize();
+
+  Future<void> _initialize() async {
     _prefs = await SharedPreferences.getInstance();
     _loadShelf();
   }
@@ -43,6 +43,40 @@ class AppState extends ChangeNotifier {
     await _persistShelf();
   }
 
+  /// Old mock entries have no file or readable body. Archive their metadata
+  /// before hiding them; imported files, assets and reading records stay intact.
+  Future<List<Book>> archiveEmptyExamples() async {
+    final examples = _shelf.where((b) => b.source == BookSource.mock).toList();
+    if (examples.isEmpty) return const [];
+    final prefs = _prefs;
+    if (prefs == null) return const [];
+    const archiveKey = 'lens_archived_empty_examples_v1';
+    final archived = <String, Map<String, Object?>>{};
+    try {
+      final previous = jsonDecode(prefs.getString(archiveKey) ?? '[]');
+      if (previous is List) {
+        for (final item in previous.whereType<Map>()) {
+          final map = Map<String, Object?>.from(item);
+          final book = Book.fromJson(map);
+          if (book != null) archived[book.stableKey] = map;
+        }
+      }
+    } catch (_) {}
+    for (final book in examples) {
+      archived[book.stableKey] = book.toJson();
+    }
+    final saved = await prefs.setString(
+      archiveKey,
+      jsonEncode(archived.values.toList()),
+    );
+    if (!saved) return const [];
+    final ids = examples.map((b) => b.stableKey).toSet();
+    _shelf.removeWhere((book) => ids.contains(book.stableKey));
+    notifyListeners();
+    await _persistShelf();
+    return examples;
+  }
+
   Future<void> replaceBook({
     required String oldId,
     required Book newBook,
@@ -54,7 +88,9 @@ class AppState extends ChangeNotifier {
     }
 
     // Avoid duplicates if another card already uses the new ID.
-    _shelf.removeWhere((b) => b.stableKey == newBook.stableKey && b.stableKey != oldId);
+    _shelf.removeWhere(
+      (b) => b.stableKey == newBook.stableKey && b.stableKey != oldId,
+    );
 
     _shelf.removeAt(idx);
     _insertBook(newBook, preferredIndex: idx);
@@ -236,7 +272,7 @@ class AppState extends ChangeNotifier {
 
 class AppScope extends InheritedNotifier<AppState> {
   const AppScope({super.key, required AppState state, required super.child})
-      : super(notifier: state);
+    : super(notifier: state);
 
   static AppState of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<AppScope>();

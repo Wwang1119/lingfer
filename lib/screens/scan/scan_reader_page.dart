@@ -7,7 +7,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' as material;
 import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import '../../services/native_image_ocr.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 
@@ -21,9 +21,14 @@ import '../../widgets/apple_glass_sheet.dart';
 import '../../widgets/liquid_selection_controls.dart';
 import '../../widgets/scan_import_sort_page.dart';
 
-const String _deepSeekProxyUrl =
-    String.fromEnvironment('DEEPSEEK_PROXY_URL', defaultValue: '');
-const String _appSecret = String.fromEnvironment('APP_SECRET', defaultValue: '');
+const String _deepSeekProxyUrl = String.fromEnvironment(
+  'DEEPSEEK_PROXY_URL',
+  defaultValue: '',
+);
+const String _appSecret = String.fromEnvironment(
+  'APP_SECRET',
+  defaultValue: '',
+);
 
 /// Photo-based OCR reader for homework scenarios.
 ///
@@ -71,7 +76,8 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
   String? _scanDocumentPath;
   String? _scanTitle;
   List<String> _pages = const <String>[];
-  Map<String, ScanBookOcrCache> _pageCaches = const <String, ScanBookOcrCache>{};
+  Map<String, ScanBookOcrCache> _pageCaches =
+      const <String, ScanBookOcrCache>{};
   int _currentPageIndex = 0;
   bool _loadingDocument = false;
   bool _inlineVocabEnabled = true;
@@ -171,9 +177,7 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     if (manifest == null || pagePath == null || pagePath.isEmpty) return;
 
     final current = _pageCaches[pagePath];
-    final annotatedTexts = <String, String>{
-      ...?current?.annotatedTexts,
-    };
+    final annotatedTexts = <String, String>{...?current?.annotatedTexts};
     final cleaned = cleanedText.trim();
     if (annotatedText != null && cleaned.isNotEmpty) {
       annotatedTexts[_annotationCacheKey(cleaned)] = annotatedText;
@@ -198,10 +202,7 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
       annotatedTexts: annotatedTexts,
     );
 
-    _pageCaches = <String, ScanBookOcrCache>{
-      ..._pageCaches,
-      pagePath: cache,
-    };
+    _pageCaches = <String, ScanBookOcrCache>{..._pageCaches, pagePath: cache};
     await ScanBookStore.updatePageCache(
       manifestPath: manifest,
       pagePath: pagePath,
@@ -209,7 +210,10 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     );
   }
 
-  Future<void> _restoreFromCache(String pagePath, ScanBookOcrCache cache) async {
+  Future<void> _restoreFromCache(
+    String pagePath,
+    ScanBookOcrCache cache,
+  ) async {
     final cleaned = cache.cleanedText.trim();
     final raw = cache.rawText.trim();
     final display = cleaned.isNotEmpty ? cleaned : raw;
@@ -427,8 +431,9 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
       } catch (_) {}
 
       try {
-        final text = await _visionOcr
-            .invokeMethod<String>('recognizeText', {'path': path});
+        final text = await _visionOcr.invokeMethod<String>('recognizeText', {
+          'path': path,
+        });
         return _OcrResult(
           text: (text ?? '').trim(),
           imageSize: imageSize,
@@ -443,11 +448,8 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
       }
     }
 
-    final input = InputImage.fromFilePath(path);
-    final latin =
-        await _recognizeWithScript(input, TextRecognitionScript.latin);
-    final chinese =
-        await _recognizeWithScript(input, TextRecognitionScript.chinese);
+    final latin = await _recognizeWithScript(path, OcrScript.latin);
+    final chinese = await _recognizeWithScript(path, OcrScript.chinese);
     final best = latin.score >= chinese.score ? latin : chinese;
     return _OcrResult(
       text: best.text.trim(),
@@ -459,35 +461,18 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
   }
 
   Future<_OcrCandidate> _recognizeWithScript(
-    InputImage input,
-    TextRecognitionScript script,
+    String path,
+    OcrScript script,
   ) async {
-    final recognizer = TextRecognizer(script: script);
     try {
-      final result = await recognizer.processImage(input);
+      final payload = await NativeImageOcr.layout(path, script: script);
+      final result = _parseVisionLayoutPayload(payload, const Size(1, 1));
       final text = result.text.trim();
-      final lines = <_OcrLine>[];
-      for (final block in result.blocks) {
-        for (final line in block.lines) {
-          final raw = line.text.trim();
-          if (raw.isEmpty) continue;
-          final rect = line.boundingBox;
-          lines.add(
-            _OcrLine(
-              text: raw,
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
-              height: rect.height,
-            ),
-          );
-        }
-      }
       return _OcrCandidate(
         text: text,
         score: _ocrScore(text),
         script: script,
-        lines: lines,
+        lines: result.lines,
       );
     } catch (_) {
       return _OcrCandidate(
@@ -496,15 +481,10 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
         script: script,
         lines: const <_OcrLine>[],
       );
-    } finally {
-      await recognizer.close();
     }
   }
 
-  _OcrResult _parseVisionLayoutPayload(
-    Map payload,
-    Size fallbackSize,
-  ) {
+  _OcrResult _parseVisionLayoutPayload(Map payload, Size fallbackSize) {
     final text = (payload['text'] ?? '').toString().trim();
     final width = _asDouble(payload['imageWidth']) ?? fallbackSize.width;
     final height = _asDouble(payload['imageHeight']) ?? fallbackSize.height;
@@ -533,7 +513,9 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     return _OcrResult(
       text: text,
       imageSize: Size(width, height),
-      lines: lines.isNotEmpty ? lines : _synthesizeOcrLines(text, Size(width, height)),
+      lines: lines.isNotEmpty
+          ? lines
+          : _synthesizeOcrLines(text, Size(width, height)),
     );
   }
 
@@ -553,8 +535,10 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     final maxCount = math.min(lines.length, 30);
     final horizontalInset = imageSize.width * 0.08;
     final usableWidth = math.max(80.0, imageSize.width - horizontalInset * 2);
-    final lineHeight =
-        (imageSize.height / math.max(maxCount + 6, 18)).clamp(22.0, 40.0);
+    final lineHeight = (imageSize.height / math.max(maxCount + 6, 18)).clamp(
+      22.0,
+      40.0,
+    );
     final topInset = imageSize.height * 0.1;
 
     return List<_OcrLine>.generate(maxCount, (index) {
@@ -662,10 +646,12 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     if (previous.isEmpty || next.isEmpty) return false;
     final prev = previous.codeUnitAt(previous.length - 1);
     final nextCode = next.codeUnitAt(0);
-    final prevAscii = (prev >= 48 && prev <= 57) ||
+    final prevAscii =
+        (prev >= 48 && prev <= 57) ||
         (prev >= 65 && prev <= 90) ||
         (prev >= 97 && prev <= 122);
-    final nextAscii = (nextCode >= 48 && nextCode <= 57) ||
+    final nextAscii =
+        (nextCode >= 48 && nextCode <= 57) ||
         (nextCode >= 65 && nextCode <= 90) ||
         (nextCode >= 97 && nextCode <= 122);
     return prevAscii && nextAscii;
@@ -720,9 +706,9 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     final oldTitle = _scanTitle ?? widget.bookTitle ?? _displayTitle;
     final appState = AppScope.of(context);
     final existingBook = appState.shelf.cast<Book?>().firstWhere(
-          (book) => book?.locator == manifest,
-          orElse: () => null,
-        );
+      (book) => book?.locator == manifest,
+      orElse: () => null,
+    );
     final oldBook = Book(
       title: oldTitle,
       author: '${_pages.isEmpty ? 1 : _pages.length} 页扫描',
@@ -754,7 +740,8 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
               child: const Text('拍照添加'),
             ),
             CupertinoActionSheetAction(
-              onPressed: () => Navigator.of(ctx).pop(_AddScanPageAction.gallery),
+              onPressed: () =>
+                  Navigator.of(ctx).pop(_AddScanPageAction.gallery),
               child: const Text('从相册添加'),
             ),
             CupertinoActionSheetAction(
@@ -812,22 +799,21 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
         paths = (result == null || result.files.isEmpty)
             ? const <String>[]
             : result.files
-                .map((file) => file.path ?? '')
-                .where((path) => path.trim().isNotEmpty)
-                .toList(growable: false);
+                  .map((file) => file.path ?? '')
+                  .where((path) => path.trim().isNotEmpty)
+                  .toList(growable: false);
         break;
     }
 
     if (!mounted || paths.isEmpty) return;
     if (paths.length > 1) {
-      final ordered = await Navigator.of(context, rootNavigator: true).push<List<String>>(
-        CupertinoPageRoute<List<String>>(
-          builder: (_) => ScanImportSortPage(
-            paths: paths,
-            title: '调整新增页面顺序',
-          ),
-        ),
-      );
+      final ordered = await Navigator.of(context, rootNavigator: true)
+          .push<List<String>>(
+            CupertinoPageRoute<List<String>>(
+              builder: (_) =>
+                  ScanImportSortPage(paths: paths, title: '调整新增页面顺序'),
+            ),
+          );
       if (!mounted || ordered == null || ordered.isEmpty) return;
       paths = ordered;
     }
@@ -853,9 +839,9 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
 
     final appState = AppScope.of(context);
     final existingBook = appState.shelf.cast<Book?>().firstWhere(
-          (book) => book?.locator == doc.path,
-          orElse: () => null,
-        );
+      (book) => book?.locator == doc.path,
+      orElse: () => null,
+    );
     final updatedBook = doc.toBook(
       widget.initialLevel,
       isPinned: existingBook?.isPinned ?? false,
@@ -892,7 +878,9 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
           imagePath: active,
           imageSize: _effectiveImageSize,
           overlayLines: _overlayLines,
-          fullText: _visibleBodyText.trim().isNotEmpty ? _visibleBodyText : _rawText,
+          fullText: _visibleBodyText.trim().isNotEmpty
+              ? _visibleBodyText
+              : _rawText,
           initialLevel: widget.initialLevel,
           ai: _ai,
           title: _displayTitle,
@@ -929,22 +917,23 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     final manifest = _scanDocumentPath;
     if (manifest == null || _pages.isEmpty) return;
 
-    final orderedPaths = await Navigator.of(context, rootNavigator: true).push<List<String>>(
-      CupertinoPageRoute<List<String>>(
-        builder: (_) => _ScanPageEditor(
-          title: _displayTitle,
-          pages: _pages,
-          currentPageIndex: _currentPageIndex,
-        ),
-      ),
-    );
+    final orderedPaths = await Navigator.of(context, rootNavigator: true)
+        .push<List<String>>(
+          CupertinoPageRoute<List<String>>(
+            builder: (_) => _ScanPageEditor(
+              title: _displayTitle,
+              pages: _pages,
+              currentPageIndex: _currentPageIndex,
+            ),
+          ),
+        );
     if (!mounted || orderedPaths == null) return;
 
     final appState = AppScope.of(context);
     final existingBook = appState.shelf.cast<Book?>().firstWhere(
-          (book) => book?.locator == manifest,
-          orElse: () => null,
-        );
+      (book) => book?.locator == manifest,
+      orElse: () => null,
+    );
     final currentPath = _activeImagePath;
     final doc = await ScanBookStore.syncPages(
       manifestPath: manifest,
@@ -976,8 +965,13 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
     }
 
     final nextPages = doc.pages.map((e) => e.path).toList(growable: false);
-    final currentIndex = currentPath == null ? 0 : nextPages.indexOf(currentPath);
-    final nextIndex = (currentIndex < 0 ? 0 : currentIndex).clamp(0, nextPages.length - 1);
+    final currentIndex = currentPath == null
+        ? 0
+        : nextPages.indexOf(currentPath);
+    final nextIndex = (currentIndex < 0 ? 0 : currentIndex).clamp(
+      0,
+      nextPages.length - 1,
+    );
 
     setState(() {
       _scanTitle = doc.title;
@@ -1007,8 +1001,9 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
 
     final y = _lastPointerDownGlobal?.dy;
     final h = MediaQuery.sizeOf(context).height;
-    final nextDock =
-        (y != null && y > h * 0.5) ? AppleGlassDock.top : AppleGlassDock.bottom;
+    final nextDock = (y != null && y > h * 0.5)
+        ? AppleGlassDock.top
+        : AppleGlassDock.bottom;
     if (!_glassVisible || nextDock != _glassDock) {
       setState(() {
         _glassVisible = true;
@@ -1162,23 +1157,26 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                                   fit: material.BoxFit.contain,
                                   errorBuilder: (context, error, stackTrace) =>
                                       const DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: Color(0xFFF2F2F7),
-                                    ),
-                                    child: Center(
-                                      child: Icon(
-                                        CupertinoIcons.photo,
-                                        color: Color(0xFF8E8E93),
-                                        size: 44,
+                                        decoration: BoxDecoration(
+                                          color: Color(0xFFF2F2F7),
+                                        ),
+                                        child: Center(
+                                          child: Icon(
+                                            CupertinoIcons.photo,
+                                            color: Color(0xFF8E8E93),
+                                            size: 44,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
                                 ),
                               ),
                               if (isCurrent)
                                 ..._overlayLines
                                     .where(_shouldKeepOverlayLine)
-                                    .map((line) => _buildOverlayLine(line, imageRect)),
+                                    .map(
+                                      (line) =>
+                                          _buildOverlayLine(line, imageRect),
+                                    ),
                               if (isCurrent && _loading)
                                 Positioned(
                                   left: 12,
@@ -1191,9 +1189,15 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                                         vertical: 9,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: CupertinoColors.white.withValues(alpha: 0.92),
-                                        borderRadius: BorderRadius.circular(999),
-                                        border: Border.all(color: const Color(0x12000000)),
+                                        color: CupertinoColors.white.withValues(
+                                          alpha: 0.92,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: const Color(0x12000000),
+                                        ),
                                       ),
                                       child: const Row(
                                         mainAxisSize: MainAxisSize.min,
@@ -1261,12 +1265,11 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                                 child: material.Image.file(
                                   File(pagePath),
                                   fit: material.BoxFit.cover,
-                                  errorBuilder:
-                                      (context, error, stackTrace) =>
-                                          const ColoredBox(
-                                    color: Color(0xFFF2F2F7),
-                                    child: SizedBox.expand(),
-                                  ),
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const ColoredBox(
+                                        color: Color(0xFFF2F2F7),
+                                        child: SizedBox.expand(),
+                                      ),
                                 ),
                               ),
                             ),
@@ -1316,15 +1319,19 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
       return const SizedBox.shrink();
     }
 
-    final left = imageRect.left + (line.left / imageSize.width) * imageRect.width;
-    final top = imageRect.top + (line.top / imageSize.height) * imageRect.height;
+    final left =
+        imageRect.left + (line.left / imageSize.width) * imageRect.width;
+    final top =
+        imageRect.top + (line.top / imageSize.height) * imageRect.height;
     final boxWidth = (line.width / imageSize.width) * imageRect.width;
     final boxHeight = (line.height / imageSize.height) * imageRect.height;
 
-    final safeLeft =
-        left.clamp(imageRect.left, math.max(imageRect.left, imageRect.right - 12)).toDouble();
-    final safeTop =
-        top.clamp(imageRect.top, math.max(imageRect.top, imageRect.bottom - 12)).toDouble();
+    final safeLeft = left
+        .clamp(imageRect.left, math.max(imageRect.left, imageRect.right - 12))
+        .toDouble();
+    final safeTop = top
+        .clamp(imageRect.top, math.max(imageRect.top, imageRect.bottom - 12))
+        .toDouble();
     final maxWidth = math.max(18.0, imageRect.right - safeLeft);
     final maxHeight = math.max(16.0, imageRect.bottom - safeTop);
     final safeWidth = math.min(math.max(18.0, boxWidth), maxWidth);
@@ -1398,8 +1405,8 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                     _loading
                         ? 'OCR 识别中'
                         : _refiningText
-                            ? 'AI 整理中'
-                            : 'AI 插词中',
+                        ? 'AI 整理中'
+                        : 'AI 插词中',
                     style: const TextStyle(
                       fontSize: 12,
                       color: Color(0xFF6E6E73),
@@ -1442,9 +1449,7 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  _inlineVocabEnabled
-                      ? '按当前难度自动插入词义'
-                      : '仅显示整理后的纯正文',
+                  _inlineVocabEnabled ? '按当前难度自动插入词义' : '仅显示整理后的纯正文',
                   style: const TextStyle(
                     fontSize: 12,
                     color: Color(0xFF8E8E93),
@@ -1478,10 +1483,7 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
               const SizedBox(height: 10),
               Text(
                 _annotatedError!,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF8E8E93),
-                ),
+                style: const TextStyle(fontSize: 12, color: Color(0xFF8E8E93)),
               ),
             ],
             if ((_error ?? '').trim().isNotEmpty) ...[
@@ -1538,13 +1540,10 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                   size: 18,
                   color: Color(0xFF3D3A34),
                 ),
-                  SizedBox(width: 6),
-                  Text(
-                    '添加页面',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF3D3A34),
-                  ),
+                SizedBox(width: 6),
+                Text(
+                  '添加页面',
+                  style: TextStyle(fontSize: 13, color: Color(0xFF3D3A34)),
                 ),
               ],
             ),
@@ -1566,10 +1565,7 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                   SizedBox(width: 6),
                   Text(
                     '页面管理',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF3D3A34),
-                    ),
+                    style: TextStyle(fontSize: 13, color: Color(0xFF3D3A34)),
                   ),
                 ],
               ),
@@ -1718,8 +1714,8 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                       _isScanBook
                           ? '扫描册'
                           : (widget.sourceLabel?.trim().isNotEmpty == true
-                              ? widget.sourceLabel!
-                              : '扫描阅读'),
+                                ? widget.sourceLabel!
+                                : '扫描阅读'),
                       style: const TextStyle(
                         fontSize: 13,
                         color: Color(0xFF6E6E73),
@@ -1770,12 +1766,12 @@ class _ScanReaderPageState extends State<ScanReaderPage> {
                 child: hasPreview
                     ? _buildContentBody()
                     : !hasPreview && _loadingDocument
-                        ? _buildLoadingBody()
-                        : !hasPreview && _loading
-                            ? _buildLoadingBody()
-                            : (_error != null)
-                                ? _buildErrorBody()
-                                : _buildContentBody(),
+                    ? _buildLoadingBody()
+                    : !hasPreview && _loading
+                    ? _buildLoadingBody()
+                    : (_error != null)
+                    ? _buildErrorBody()
+                    : _buildContentBody(),
               ),
               if (_glassVisible)
                 Positioned.fill(
@@ -1833,7 +1829,7 @@ class _OcrCandidate {
 
   final String text;
   final int score;
-  final TextRecognitionScript script;
+  final OcrScript script;
   final List<_OcrLine> lines;
 }
 
@@ -1950,10 +1946,11 @@ class _ScanPageEditorState extends State<_ScanPageEditor> {
                   child: material.ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
                     itemCount: _pages.length,
-                    proxyDecorator: (child, index, animation) => material.Material(
-                      color: material.Colors.transparent,
-                      child: child,
-                    ),
+                    proxyDecorator: (child, index, animation) =>
+                        material.Material(
+                          color: material.Colors.transparent,
+                          child: child,
+                        ),
                     onReorder: (oldIndex, newIndex) {
                       setState(() {
                         if (newIndex > oldIndex) newIndex -= 1;
@@ -1995,11 +1992,12 @@ class _ScanPageEditorState extends State<_ScanPageEditor> {
                                   child: material.Image.file(
                                     File(path),
                                     fit: material.BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) =>
-                                        const ColoredBox(
-                                      color: Color(0xFFF2F2F7),
-                                      child: SizedBox.expand(),
-                                    ),
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const ColoredBox(
+                                              color: Color(0xFFF2F2F7),
+                                              child: SizedBox.expand(),
+                                            ),
                                   ),
                                 ),
                               ),
@@ -2108,8 +2106,9 @@ class _ScanZoomPageState extends State<_ScanZoomPage> {
     if (raw.isEmpty) return;
     final y = _lastPointerDownGlobal?.dy;
     final h = MediaQuery.sizeOf(context).height;
-    final nextDock =
-        (y != null && y > h * 0.5) ? AppleGlassDock.top : AppleGlassDock.bottom;
+    final nextDock = (y != null && y > h * 0.5)
+        ? AppleGlassDock.top
+        : AppleGlassDock.bottom;
     if (!_glassVisible || nextDock != _dock) {
       setState(() {
         _glassVisible = true;
@@ -2132,7 +2131,11 @@ class _ScanZoomPageState extends State<_ScanZoomPage> {
     var start = pos;
     for (var i = pos - 1; i >= 0; i -= 1) {
       final ch = full.codeUnitAt(i);
-      if (ch == 0x0A || ch == 0x2E || ch == 0x3F || ch == 0x21 || ch == 0x3002) {
+      if (ch == 0x0A ||
+          ch == 0x2E ||
+          ch == 0x3F ||
+          ch == 0x21 ||
+          ch == 0x3002) {
         start = i + 1;
         break;
       }
@@ -2141,7 +2144,11 @@ class _ScanZoomPageState extends State<_ScanZoomPage> {
     var end = pos + needle.length;
     for (var i = end; i < full.length; i += 1) {
       final ch = full.codeUnitAt(i);
-      if (ch == 0x0A || ch == 0x2E || ch == 0x3F || ch == 0x21 || ch == 0x3002) {
+      if (ch == 0x0A ||
+          ch == 0x2E ||
+          ch == 0x3F ||
+          ch == 0x21 ||
+          ch == 0x3002) {
         end = i + 1;
         break;
       }
@@ -2194,7 +2201,8 @@ class _ScanZoomPageState extends State<_ScanZoomPage> {
                       onSelectionChanged: _onSelectionChanged,
                       child: Listener(
                         behavior: HitTestBehavior.translucent,
-                        onPointerDown: (e) => _lastPointerDownGlobal = e.position,
+                        onPointerDown: (e) =>
+                            _lastPointerDownGlobal = e.position,
                         child: Center(
                           child: material.InteractiveViewer(
                             constrained: false,
@@ -2212,17 +2220,19 @@ class _ScanZoomPageState extends State<_ScanZoomPage> {
                                       fit: material.BoxFit.contain,
                                     ),
                                   ),
-                                  ...widget.overlayLines.where((line) {
-                                    return line.text.trim().isNotEmpty &&
-                                        line.width > 8 &&
-                                        line.height > 8;
-                                  }).map(
-                                    (line) => _ZoomOverlayLine(
-                                      line: line,
-                                      imageSize: widget.imageSize,
-                                      imageRect: Offset.zero & displaySize,
-                                    ),
-                                  ),
+                                  ...widget.overlayLines
+                                      .where((line) {
+                                        return line.text.trim().isNotEmpty &&
+                                            line.width > 8 &&
+                                            line.height > 8;
+                                      })
+                                      .map(
+                                        (line) => _ZoomOverlayLine(
+                                          line: line,
+                                          imageSize: widget.imageSize,
+                                          imageRect: Offset.zero & displaySize,
+                                        ),
+                                      ),
                                 ],
                               ),
                             ),
@@ -2264,8 +2274,10 @@ class _ZoomOverlayLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final left = imageRect.left + (line.left / imageSize.width) * imageRect.width;
-    final top = imageRect.top + (line.top / imageSize.height) * imageRect.height;
+    final left =
+        imageRect.left + (line.left / imageSize.width) * imageRect.width;
+    final top =
+        imageRect.top + (line.top / imageSize.height) * imageRect.height;
     final boxWidth = (line.width / imageSize.width) * imageRect.width;
     final boxHeight = (line.height / imageSize.height) * imageRect.height;
     final fontSize = boxHeight.clamp(14.0, 34.0) * 0.72;

@@ -1,0 +1,61 @@
+{
+  "books": [
+    {
+      "title": "爱丽丝梦游仙境",
+      "originalTitle": "Alice’s Adventures in Wonderland",
+      "author": "Lewis Carroll",
+      "authorLife": "1832–1898",
+      "publicationYear": "1865",
+      "asset": "assets/books/alice_in_wonderland.txt",
+      "source": "https://www.gutenberg.org/ebooks/11",
+      "download": "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+      "downloadedAt": "2026-11-14",
+      "sourceSha256": "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e",
+      "assetSha256": "88befc3a178e1e35d944d96df2f951853db0d377e2850e2508a31d73155ddbdc",
+      "assetBytes": 151052,
+      "bodyCharacters": 144557,
+      "bodyWords": 26524,
+      "modification": "Removed external source header/footer at official START/END markers; normalized line endings to LF, removed standalone [Illustration] placeholders without captions, and limited consecutive blank lines to two. Complete literary text including original front matter, chapter titles, illustration captions and ending retained. No cover art, modern translation or abridgement included.",
+      "standaloneIllustrationPlaceholdersRemoved": 1
+    },
+    {
+      "title": "福尔摩斯历险记",
+      "originalTitle": "The Adventures of Sherlock Holmes",
+      "author": "Arthur Conan Doyle",
+      "authorLife": "1859–1930",
+      "publicationYear": "1892",
+      "asset": "assets/books/sherlock_holmes_adventures.txt",
+      "source": "https://www.gutenberg.org/ebooks/1661",
+      "download": "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+      "downloadedAt": "2026-11-14",
+      "sourceSha256": "922e2a12ccb43a4c9544c260b2166c6ad2097aeb5957faeee113f173bb857cd0",
+      "assetSha256": "754a639be325e94ee53c8b4fde226bb2633596bc9593bbe7d77245e76fc15e3b",
+      "assetBytes": 575770,
+      "bodyCharacters": 562179,
+      "bodyWords": 104506,
+      "modification": "Removed external source header/footer at official START/END markers; normalized line endings to LF, removed standalone [Illustration] placeholders without captions, and limited consecutive blank lines to two. Complete literary text including original front matter, chapter titles, illustration captions and ending retained. No cover art, modern translation or abridgement included.",
+      "standaloneIllustrationPlaceholdersRemoved": 0
+    },
+    {
+      "title": "傲慢与偏见",
+      "originalTitle": "Pride and Prejudice",
+      "author": "Jane Austen",
+      "authorLife": "1775–1817",
+      "publicationYear": "1813",
+      "asset": "assets/books/pride_and_prejudice.txt",
+      "source": "https://www.gutenberg.org/ebooks/1342",
+      "download": "https://www.gutenberg.org/cache/epub/1342/pg1342.txt",
+      "downloadedAt": "2026-11-14",
+      "sourceSha256": "3f6bb9d6f78e0293b56acd4714dd68cb7d6d1d293402031ce9d5a216bcaf9d75",
+      "assetSha256": "cb46d9ecf533ac8aeeca23c069946873b09854de7ce473ec5df3a20132b727b1",
+      "assetBytes": 736258,
+      "bodyCharacters": 727058,
+      "bodyWords": 127274,
+      "modification": "Removed external source header/footer at official START/END markers; normalized line endings to LF, removed standalone [Illustration] placeholders without captions, and limited consecutive blank lines to two. Complete literary text including original front matter, chapter titles, illustration captions and ending retained. No cover art, modern translation or abridgement included.",
+      "standaloneIllustrationPlaceholdersRemoved": 86
+    }
+  ],
+  "sourcePolicy": "https://www.gutenberg.org/policy/license.html",
+  "redistribution": "Public-domain literary body only. All source-project trademark/license wrapping removed from book texts; links here are source acknowledgments, not branding or endorsement. Original source payloads were checked for both complete START/END markers.",
+  "verification": "Each official catalogue states Public domain in the USA; author dates and original publication dates recorded. English original texts only."
+}

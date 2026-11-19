@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-PROXY_URL="${DEEPSEEK_PROXY_URL:-https://1411825358-926g6jv5p4.ap-beijing.tencentscf.com}"
+PROXY_URL="${DEEPSEEK_PROXY_URL:?Set DEEPSEEK_PROXY_URL}"
 APP_SECRET_VALUE="${APP_SECRET:-}"
 ARCHIVE_PATH="${ARCHIVE_PATH:-build/ios/archive/Runner.xcarchive}"
 EXPORT_PATH="${EXPORT_PATH:-build/ios/ipa}"

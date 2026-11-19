@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Match the Flutter first frame. No legacy splash bitmap is drawn. -->
+    <color name="lingfer_launch_background">#F6F6F3</color>
+</resources>

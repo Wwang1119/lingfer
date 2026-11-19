@@ -12,21 +12,49 @@ import 'package:html/parser.dart' as html_parser;
 import 'package:xml/xml.dart' as xml;
 
 import '../models/book.dart';
+import 'imported_file_store.dart';
+
+class BookReadException implements Exception {
+  const BookReadException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
 
 class BookTextService {
   Future<String> readBookText(Book book) async {
-    switch (book.source) {
-      case BookSource.localFile:
-        return _readFromFile(book.locator);
-      case BookSource.asset:
-        return _readFromAsset(book.locator);
-      case BookSource.mock:
-        return '（这是占位书籍：${book.title}）\n\n把真实 txt/epub 导入到书架后即可阅读。';
+    try {
+      final String text;
+      switch (book.source) {
+        case BookSource.localFile:
+          text = await _readFromFile(book.locator);
+        case BookSource.asset:
+          text = await _readFromAsset(book.locator);
+        case BookSource.mock:
+          throw const BookReadException('这条旧版示例记录没有正文，请返回主页选择内置公版书，或导入完整资料。');
+      }
+      if (text.trim().isEmpty) {
+        throw const BookReadException('这份资料没有可读取的正文。请重新导入完整文件；图片或扫描件可用截图阅读。');
+      }
+      return text;
+    } on BookReadException {
+      rethrow;
+    } on FileSystemException {
+      throw const BookReadException('这份资料的文件已不可访问，请返回主页重新导入。资料记录和阅读进度会保留。');
+    } on FormatException {
+      throw const BookReadException(
+        '这份资料未能解析，请确认文件完整，或重新导入 TXT、EPUB、PDF、DOCX。',
+      );
     }
   }
 
   Future<String> _readFromFile(String path) async {
-    final bytes = await File(path).readAsBytes();
+    final readablePath = await ImportedFileStore.resolveReadablePath(path);
+    if (!await File(readablePath).exists()) {
+      throw const BookReadException('找不到这份资料的原文件，请返回主页重新导入。原记录和阅读进度会保留。');
+    }
+    final bytes = await File(readablePath).readAsBytes();
     return _decodeByExtension(path, bytes);
   }
 
@@ -62,14 +90,18 @@ class BookTextService {
   }
 
   Future<String> _readEpub(List<int> bytes) async {
-    final book = await EpubReader.readBook(bytes);
+    // EPUB 3 can have a valid spine without an NCX chapter map. Read the
+    // package's ordered spine first, rather than treating empty Chapters as
+    // proof that the book is empty or returning only its title and author.
+    final spineText = _readEpubSpine(bytes);
+    if (spineText.trim().isNotEmpty) return spineText;
+    final EpubBook book;
+    try {
+      book = await EpubReader.readBook(bytes);
+    } catch (_) {
+      throw const BookReadException('这份 EPUB 未能读取，请确认文件完整，或重新导入文字版资料。');
+    }
     final buffer = StringBuffer();
-
-    final title = (book.Title ?? '').trim();
-    final author = (book.Author ?? '').trim();
-    if (title.isNotEmpty) buffer.writeln(title);
-    if (author.isNotEmpty) buffer.writeln(author);
-    if (buffer.isNotEmpty) buffer.writeln();
 
     final chapters = book.Chapters ?? const <EpubChapter>[];
     for (final chapter in chapters) {
@@ -77,7 +109,73 @@ class BookTextService {
     }
 
     final result = buffer.toString().trimRight();
-    return result.isEmpty ? '（未能提取到文本内容）' : result;
+    if (result.isEmpty) {
+      throw const BookReadException('这本 EPUB 没有可提取的正文，可能是图片书或文件不完整。请换一份文字版资料。');
+    }
+    return result;
+  }
+
+  String _readEpubSpine(List<int> bytes) {
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final files = {
+        for (final file in archive)
+          if (file.isFile) file.name: file,
+      };
+      String? read(String path) {
+        final file = files[path];
+        if (file == null) return null;
+        return utf8.decode(file.content as List<int>, allowMalformed: true);
+      }
+
+      final container = read('META-INF/container.xml');
+      if (container == null) return '';
+      final rootfiles = xml.XmlDocument.parse(
+        container,
+      ).descendantElements.where((element) => element.name.local == 'rootfile');
+      final packagePath = rootfiles.firstOrNull?.getAttribute('full-path');
+      if (packagePath == null) return '';
+      final package = read(packagePath);
+      if (package == null) return '';
+      final document = xml.XmlDocument.parse(package);
+      final manifest = <String, xml.XmlElement>{
+        for (final element in document.descendantElements)
+          if (element.name.local == 'item' &&
+              element.getAttribute('id') != null)
+            element.getAttribute('id')!: element,
+      };
+      final buffer = StringBuffer();
+      final seen = <String>{};
+      for (final reference in document.descendantElements.where(
+        (element) => element.name.local == 'itemref',
+      )) {
+        final item = manifest[reference.getAttribute('idref')];
+        if (item == null) continue;
+        final href = item.getAttribute('href');
+        if (href == null ||
+            (item.getAttribute('properties') ?? '').split(' ').contains('nav')) {
+          continue;
+        }
+        final path = Uri.decodeComponent(
+          Uri.parse(packagePath).resolve(href).path,
+        );
+        if (!seen.add(path)) continue;
+        final html = read(path);
+        if (html == null ||
+            !(item.getAttribute('media-type') ?? '').contains('html')) {
+          continue;
+        }
+        final text = _htmlToPlainText(html);
+        if (text.isNotEmpty) {
+          buffer.writeln(text);
+          buffer.writeln();
+        }
+      }
+      return buffer.toString().trimRight();
+    } catch (_) {
+      // Existing NCX/chapter extraction remains available for older variants.
+      return '';
+    }
   }
 
   Future<String> _readDocx(List<int> bytes) async {
@@ -86,7 +184,7 @@ class BookTextService {
     return await runZoned(
       () async {
         final text = _docxToTextSafely(Uint8List.fromList(bytes));
-        return text.trim().isEmpty ? '（未能提取到文本内容）' : text;
+        return text;
       },
       zoneSpecification: ZoneSpecification(
         print: (self, parent, zone, line) {},
@@ -145,8 +243,10 @@ class BookTextService {
       return lines.join('\n');
     } catch (_) {
       // Fallback: regex extract w:t text when XML parsing fails.
-      final matches = RegExp(r'<w:t[^>]*>([\s\S]*?)</w:t>', multiLine: true)
-          .allMatches(xmlText);
+      final matches = RegExp(
+        r'<w:t[^>]*>([\s\S]*?)</w:t>',
+        multiLine: true,
+      ).allMatches(xmlText);
       final out = StringBuffer();
       for (final m in matches) {
         final raw = m.group(1) ?? '';
@@ -179,15 +279,14 @@ class BookTextService {
 
   void _appendChapter(StringBuffer buffer, EpubChapter chapter) {
     final title = (chapter.Title ?? '').trim();
-    if (title.isNotEmpty) {
-      buffer.writeln(title);
-      buffer.writeln();
-    }
-
     final html = (chapter.HtmlContent ?? '').trim();
     if (html.isNotEmpty) {
       final text = _htmlToPlainText(html);
       if (text.isNotEmpty) {
+        if (title.isNotEmpty && !text.startsWith(title)) {
+          buffer.writeln(title);
+          buffer.writeln();
+        }
         buffer.writeln(text);
         buffer.writeln();
         buffer.writeln();

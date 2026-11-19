@@ -17,5 +17,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "VisionOcrPlugin") {
       VisionOcrPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShareStatePlugin") {
+      ShareStatePlugin.register(with: registrar)
+    }
   }
 }

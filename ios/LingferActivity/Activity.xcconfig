@@ -1,0 +1,2 @@
+// Share version metadata with Runner without linking its Flutter/CocoaPods plugins.
+#include "../Flutter/Generated.xcconfig"

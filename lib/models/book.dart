@@ -53,28 +53,41 @@ class Book {
   String get id => stableKey;
 
   Book withDefaultLevel(VocabularyLevel next) => Book(
-        title: title,
-        author: author,
-        defaultLevel: next,
-        source: source,
-        locator: locator,
-        isPinned: isPinned,
-        coverAssetPath: coverAssetPath,
-        coverFilePath: coverFilePath,
-        blurb: blurb,
-      );
+    title: title,
+    author: author,
+    defaultLevel: next,
+    source: source,
+    locator: locator,
+    isPinned: isPinned,
+    coverAssetPath: coverAssetPath,
+    coverFilePath: coverFilePath,
+    blurb: blurb,
+  );
 
   Book withPinned(bool pinned) => Book(
-        title: title,
-        author: author,
-        defaultLevel: defaultLevel,
-        source: source,
-        locator: locator,
-        isPinned: pinned,
-        coverAssetPath: coverAssetPath,
-        coverFilePath: coverFilePath,
-        blurb: blurb,
-      );
+    title: title,
+    author: author,
+    defaultLevel: defaultLevel,
+    source: source,
+    locator: locator,
+    isPinned: pinned,
+    coverAssetPath: coverAssetPath,
+    coverFilePath: coverFilePath,
+    blurb: blurb,
+  );
+
+  /// Replace only the file location; keep title/level identity and progress keys.
+  Book withLocator(String path) => Book(
+    title: title,
+    author: author,
+    defaultLevel: defaultLevel,
+    source: source,
+    locator: path,
+    isPinned: isPinned,
+    coverAssetPath: coverAssetPath,
+    coverFilePath: coverFilePath,
+    blurb: blurb,
+  );
 
   String get stableKey {
     // Composite ID (title + level) to prevent shelf duplication and to ensure
@@ -101,7 +114,10 @@ class Book {
     }
   }
 
-  static Book fromLocalPath(String path, {required VocabularyLevel defaultLevel}) {
+  static Book fromLocalPath(
+    String path, {
+    required VocabularyLevel defaultLevel,
+  }) {
     final name = path.split(Platform.pathSeparator).last;
     final lower = path.toLowerCase();
     final title = name.replaceAll(
@@ -110,7 +126,8 @@ class Book {
     );
     return Book(
       title: title.isEmpty ? name : title,
-      author: lower.endsWith('.png') ||
+      author:
+          lower.endsWith('.png') ||
               lower.endsWith('.jpg') ||
               lower.endsWith('.jpeg') ||
               lower.endsWith('.heic') ||
@@ -123,7 +140,10 @@ class Book {
     );
   }
 
-  static Book fromAsset(String assetPath, {required VocabularyLevel defaultLevel}) {
+  static Book fromAsset(
+    String assetPath, {
+    required VocabularyLevel defaultLevel,
+  }) {
     final name = assetPath.split('/').last;
     final title = name.replaceAll(
       RegExp(r'\.(txt|epub|pdf)$', caseSensitive: false),
@@ -139,23 +159,25 @@ class Book {
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'title': title,
-        'author': author,
-        // Persist both keys for backward compatibility with older builds.
-        'defaultLevel': defaultLevel.name,
-        'level': defaultLevel.name,
-        'source': source.name,
-        'locator': locator,
-        'isPinned': isPinned,
-        'coverAssetPath': coverAssetPath,
-        'coverFilePath': coverFilePath,
-        'blurb': blurb,
-      };
+    'title': title,
+    'author': author,
+    // Persist both keys for backward compatibility with older builds.
+    'defaultLevel': defaultLevel.name,
+    'level': defaultLevel.name,
+    'source': source.name,
+    'locator': locator,
+    'isPinned': isPinned,
+    'coverAssetPath': coverAssetPath,
+    'coverFilePath': coverFilePath,
+    'blurb': blurb,
+  };
 
   static Book? fromJson(Map<String, Object?> json) {
     final title = json['title'];
     final author = json['author'];
-    final defaultLevel = (json['level'] is String) ? json['level'] : json['defaultLevel'];
+    final defaultLevel = (json['level'] is String)
+        ? json['level']
+        : json['defaultLevel'];
     final source = json['source'];
     final locator = json['locator'];
     final isPinned = json['isPinned'];

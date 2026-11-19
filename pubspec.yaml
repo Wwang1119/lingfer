@@ -1,5 +1,5 @@
 name: lingfer
-description: "语渡 Lingfer：面向 iOS/macOS 的 AI 伴读与多格式阅读应用。"
+description: "语渡 Lingfer：多语言原词标注、自动随屏阅读与本地资料。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.2.9+1
+version: 2.1.1+15
 
 environment:
   sdk: ^3.11.1
@@ -51,14 +51,12 @@ dependencies:
   url_launcher: ^6.3.2
   syncfusion_flutter_pdfviewer: ^33.1.44
   image_picker: ^1.1.2
-  google_mlkit_text_recognition: ^0.15.0
   image: ^3.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.11.0
-  flutter_native_splash: 2.2.16
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -72,16 +70,26 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  config:
+    enable-swift-package-manager: false
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
 
+  fonts:
+    - family: LingferDisplay
+      fonts:
+        - asset: assets/fonts/lingfer-display-semibold.ttf
+          weight: 600
+
   assets:
-    - assets/books/wo_zhe_yi_bei_zi.epub
-    - assets/books/cha_guan.epub
-    - assets/books/sample_paper.pdf
+    - assets/data/vocabulary.json
+    - assets/licenses/
+    - assets/books/alice_in_wonderland.txt
+    - assets/books/sherlock_holmes_adventures.txt
+    - assets/books/pride_and_prejudice.txt
     - assets/covers/
     - assets/branding/
 
@@ -125,18 +133,8 @@ flutter_icons:
     generate: true
     image_path: assets/branding/app_icon.png
 
-flutter_native_splash:
-  # Use the full splash artwork as a background image to avoid the
-  # "center square + mismatched fill color" artifact on different screens.
-  color: "#162841"
-  background_image: assets/branding/splash.jpg
-  ios_content_mode: scaleAspectFill
-  android: true
-  ios: true
-  macos: true
-  android_12:
-    # Android 12+ doesn't support background images. Keep the brand color and
-    # show the app icon inside the system splash circle.
-    color: "#162841"
-    image: assets/branding/app_icon.png
-    icon_background_color: "#162841"
+# Launch screens are maintained directly in the native launch resources.
+# iOS: ios/Runner/Base.lproj/LaunchScreen.storyboard
+# Android: res/drawable*/launch_background.xml and values*/styles.xml
+# Keep their #F6F6F3 background aligned with LingferColors.background.
+# Do not regenerate the old full-screen branding artwork with flutter_native_splash.

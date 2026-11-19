@@ -15,8 +15,7 @@
 
 const https = require('https');
 
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || ''; // <-- set in CloudBase env
-const APP_SECRET = process.env.APP_SECRET || ''; // <-- set in CloudBase env
+const crypto = require('node:crypto');
 
 function headerValue(headers, key) {
   if (!headers) return '';
@@ -39,7 +38,7 @@ function parseJsonBody(event) {
   }
 }
 
-function deepSeekRequest(bodyObj) {
+function deepSeekRequest(bodyObj, apiKey) {
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify(bodyObj ?? {});
     const req = https.request(
@@ -48,7 +47,7 @@ function deepSeekRequest(bodyObj) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Length': Buffer.byteLength(postData),
         },
         timeout: 25_000,
@@ -76,7 +75,8 @@ function deepSeekRequest(bodyObj) {
   });
 }
 
-exports.main_handler = async (event, context) => {
+function createHandler({ env = process.env, provider = deepSeekRequest } = {}) {
+ return async (event, context) => {
   const headers = (event && (event.headers || event.header)) || {};
   const method = String(event && (event.httpMethod || event.method) || 'POST').toUpperCase();
 
@@ -84,7 +84,7 @@ exports.main_handler = async (event, context) => {
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, X-App-Secret',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
     'Content-Type': 'application/json; charset=utf-8',
   };
 
@@ -92,7 +92,17 @@ exports.main_handler = async (event, context) => {
     return { statusCode: 204, headers: corsHeaders, body: '' };
   }
 
-  if (!DEEPSEEK_API_KEY) {
+  // A health probe checks deployment/configuration only. It never sends screen
+  // content to a model and never consumes model tokens.
+  if (method === 'GET' || method === 'HEAD') {
+    return { statusCode: 200, headers: corsHeaders, body: method === 'HEAD' ? '' : JSON.stringify({
+      ok: true, service: 'lingfer-reading-proxy', version: 2,
+      modelReady: Boolean(env.DEEPSEEK_API_KEY && env.APP_SECRET),
+    }) };
+  }
+  if (method !== 'POST') return { statusCode: 405, headers: corsHeaders, body: JSON.stringify({ error: 'Method not allowed' }) };
+
+  if (!env.DEEPSEEK_API_KEY) {
     return {
       statusCode: 500,
       headers: corsHeaders,
@@ -101,7 +111,10 @@ exports.main_handler = async (event, context) => {
   }
 
   const provided = headerValue(headers, 'X-App-Secret');
-  if (!APP_SECRET || provided !== APP_SECRET) {
+  const expected = env.APP_SECRET || '';
+  const valid = expected && provided && Buffer.byteLength(expected) === Buffer.byteLength(provided)
+    && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
+  if (!valid) {
     return {
       statusCode: 401,
       headers: corsHeaders,
@@ -110,7 +123,11 @@ exports.main_handler = async (event, context) => {
   }
 
   const bodyObj = parseJsonBody(event);
-  if (!bodyObj || typeof bodyObj !== 'object') {
+  if (!bodyObj || typeof bodyObj !== 'object' || !Array.isArray(bodyObj.messages)
+      || bodyObj.messages.length === 0 || bodyObj.messages.length > 12
+      || bodyObj.messages.some(message => !message || !['system', 'user', 'assistant'].includes(message.role)
+        || typeof message.content !== 'string')
+      || JSON.stringify(bodyObj).length > 24000) {
     return {
       statusCode: 400,
       headers: corsHeaders,
@@ -119,7 +136,13 @@ exports.main_handler = async (event, context) => {
   }
 
   try {
-    const upstream = await deepSeekRequest(bodyObj);
+    const payload = {
+      model: env.DEEPSEEK_MODEL || 'deepseek-chat',
+      messages: bodyObj.messages,
+      temperature: typeof bodyObj.temperature === 'number' ? Math.max(0, Math.min(1, bodyObj.temperature)) : 0.2,
+      max_tokens: Math.max(128, Math.min(3000, Number(bodyObj.max_tokens) || 1600)),
+    };
+    const upstream = await provider(payload, env.DEEPSEEK_API_KEY);
     return {
       statusCode: upstream.statusCode,
       headers: { ...corsHeaders },
@@ -129,8 +152,12 @@ exports.main_handler = async (event, context) => {
     return {
       statusCode: 502,
       headers: corsHeaders,
-      body: JSON.stringify({ error: 'Bad gateway', detail: String(err && err.message || err) }),
+      body: JSON.stringify({ error: 'AI service temporarily unavailable' }),
     };
   }
-};
+ };
+}
+
+exports.createHandler = createHandler;
+exports.main_handler = createHandler();
 
