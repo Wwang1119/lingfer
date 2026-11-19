@@ -42,7 +42,13 @@ object ScreenReaderState {
                 try {
                     val array=org.json.JSONArray(prefs.getString("lastTranslationSegments","[]"))
                     val parts=(0 until array.length()).map {i->val p=array.getJSONObject(i);mapOf("id" to p.optString("id"),"source" to p.optString("source"),"translation" to (p.opt("translation") as? String))}
-                    if(parts.isNotEmpty()) {put("translationSegments",parts);if(parts.any{it["translation"]==null}) put("translationError","尚有段落未完成，请重试。")}
+                    if (parts.isNotEmpty()) {
+                        put("translationSegments", parts)
+                        if (parts.any { it["translation"] == null }) {
+                            val allowed = NativeAiConsent.isAllowed(NativeAiConsent.preferences(context))
+                            put("translationError", if (allowed) "尚有段落未完成，请重试。" else NativeAiConsent.prompt)
+                        }
+                    }
                 } catch(_:Exception){}
             }
         }

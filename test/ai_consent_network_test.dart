@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// The legacy plugin exposes its in-memory test backend in the platform interface.
+// ignore: depend_on_referenced_packages
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'package:lingfer/features/companion/reading_assistant.dart';
 import 'package:lingfer/features/companion/reading_preferences.dart';
@@ -11,6 +14,19 @@ import 'package:lingfer/models/translation_mode.dart';
 import 'package:lingfer/models/vocabulary_level.dart';
 import 'package:lingfer/services/ai_consent_store.dart';
 import 'package:lingfer/services/ai_translation_service.dart';
+
+class _RecordingPreferences extends InMemorySharedPreferencesStore {
+  _RecordingPreferences(super.data) : super.withData();
+
+  final snapshots = <Map<String, Object>>[];
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    final saved = await super.setValue(valueType, key, value);
+    snapshots.add(await getAll());
+    return saved;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -40,6 +56,37 @@ void main() {
         AiConsentStore.currentVersion - 1,
       );
       expect(await AiConsentStore.isAllowed(), isFalse);
+    },
+  );
+
+  test(
+    'Declining an outdated approval keeps consent off after each write',
+    () async {
+      const version = 'flutter.${AiConsentStore.versionKey}';
+      const allowed = 'flutter.${AiConsentStore.allowedKey}';
+      final store = _RecordingPreferences({
+        version: AiConsentStore.currentVersion - 1,
+        allowed: true,
+      });
+      SharedPreferencesStorePlatform.instance = store;
+      addTearDown(() => SharedPreferences.setMockInitialValues({}));
+
+      expect(await AiConsentStore.isAllowed(), isFalse);
+      final refusal = await AiConsentStore.setAllowed(false);
+
+      expect(refusal.decided, isTrue);
+      expect(store.snapshots, hasLength(2));
+      for (final snapshot in store.snapshots) {
+        expect(
+          snapshot[version] == AiConsentStore.currentVersion &&
+              snapshot[allowed] == true,
+          isFalse,
+          reason:
+              'A native reader could see this committed snapshot: $snapshot',
+        );
+      }
+      expect(store.snapshots.last[version], AiConsentStore.currentVersion);
+      expect(store.snapshots.last[allowed], isFalse);
     },
   );
 

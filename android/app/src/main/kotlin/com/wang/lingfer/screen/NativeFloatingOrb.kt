@@ -22,23 +22,24 @@ internal class NativeFloatingOrb(context: Context) : TextView(context) {
         val size = min(width, height).toFloat()
         val cx = width / 2f; val cy = height / 2f
         val radius = size * .445f
-        ink.style = Paint.Style.FILL
-        ink.color = Color.WHITE
-        ink.setShadowLayer(size * .045f, 0f, size * .035f, 0x23334A53)
-        ink.shader = LinearGradient(cx-radius, cy-radius, cx+radius, cy+radius,
-            intArrayOf(0xFFFFFFFF.toInt(), 0xF0F5F7F5.toInt(), 0xF9EBF0EF.toInt()), null, Shader.TileMode.CLAMP)
-        canvas.drawCircle(cx, cy, radius, ink)
-        ink.clearShadowLayer(); ink.shader = null
-        ink.style = Paint.Style.STROKE; ink.strokeWidth = size * .018f; ink.color = Color.WHITE
-        canvas.drawCircle(cx, cy, radius-size*.01f, ink)
-        ink.strokeWidth = size*.009f; ink.color = 0x22365F70
-        canvas.drawCircle(cx, cy, radius-size*.034f, ink)
         val state = text.toString()
-        val symbol = if (state == "Ⅱ") "pause" else "book"
-        NativeReadingIcon.draw(canvas, symbol, RectF(cx-size*.235f, cy-size*.235f, cx+size*.235f, cy+size*.235f), NativeReadingStyle.accent)
+        val paused = state == "Ⅱ"
+        val face = if (paused) NativeReadingStyle.paper else NativeReadingStyle.deepAccent
+        val symbolColor = if (paused) NativeReadingStyle.accent else Color.WHITE
+        ink.style = Paint.Style.FILL
+        ink.color = face
+        ink.setShadowLayer(size * .045f, 0f, size * .025f, 0x37344E55)
+        canvas.drawCircle(cx, cy, radius, ink)
+        ink.clearShadowLayer()
+        ink.style = Paint.Style.STROKE
+        ink.strokeWidth = size * .028f
+        ink.color = 0xECFFFFFF.toInt()
+        canvas.drawCircle(cx, cy, radius - ink.strokeWidth/2, ink)
+        val box = RectF(cx-size*.22f, cy-size*.22f, cx+size*.22f, cy+size*.22f)
+        NativeReadingIcon.draw(canvas, if (paused) "pause" else "book", box, symbolColor)
         if (state == "…") {
             ink.style = Paint.Style.STROKE; ink.strokeCap = Paint.Cap.ROUND
-            ink.strokeWidth = size*.035f; ink.color = NativeReadingStyle.accent
+            ink.strokeWidth = size*.035f; ink.color = Color.WHITE
             canvas.drawArc(RectF(cx-radius+size*.06f,cy-radius+size*.06f,cx+radius-size*.06f,cy+radius-size*.06f),-80f,100f,false,ink)
         } else if (state in listOf("!", "重试", "语言")) {
             ink.style=Paint.Style.FILL; ink.color=Color.WHITE
@@ -79,6 +80,9 @@ internal class NativeReadingIcon(private val name: String, private val color: In
             val path=Path()
             when(name) {
                 "pause" -> {canvas.drawLine(9f,6f,9f,18f,p);canvas.drawLine(15f,6f,15f,18f,p)}
+                "play" -> {path.moveTo(8f,5f);path.lineTo(18f,12f);path.lineTo(8f,19f);path.close();canvas.drawPath(path,p)}
+                "next" -> {path.moveTo(9f,6f);path.lineTo(15f,12f);path.lineTo(9f,18f);canvas.drawPath(path,p)}
+                "check" -> {path.moveTo(5f,12f);path.lineTo(10f,17f);path.lineTo(19f,7f);canvas.drawPath(path,p)}
                 "stop" -> canvas.drawRoundRect(6f,6f,18f,18f,3f,3f,p)
                 "close" -> {canvas.drawLine(7f,7f,17f,17f,p);canvas.drawLine(17f,7f,7f,17f,p)}
                 "more" -> {p.style=Paint.Style.FILL;for(x in listOf(5f,12f,19f))canvas.drawCircle(x,12f,1.25f,p)}

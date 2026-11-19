@@ -15,6 +15,7 @@ import 'package:lingfer/features/companion/companion_controller.dart';
 import 'package:lingfer/features/companion/companion_shell.dart';
 import 'package:lingfer/features/companion/lingfer_theme.dart';
 import 'package:lingfer/features/companion/reading_assistant.dart';
+import 'package:lingfer/features/companion/reading_preferences.dart';
 import 'package:lingfer/features/companion/vocabulary_engine.dart';
 
 void viewport(WidgetTester tester, Size size) {
@@ -29,6 +30,37 @@ Future<void> settleResources(WidgetTester tester) async {
   await tester.runAsync(
     () => Future<void>.delayed(const Duration(milliseconds: 60)),
   );
+  await tester.pumpAndSettle();
+}
+
+Future<void> openLanguageSettings(WidgetTester tester, String direction) async {
+  final home = find.byKey(const ValueKey('reading-home-scroll'));
+  final entry = find.descendant(of: home, matching: find.text(direction));
+  await tester.scrollUntilVisible(
+    entry,
+    200,
+    scrollable: find
+        .descendant(of: home, matching: find.byType(Scrollable))
+        .first,
+  );
+  await tester.ensureVisible(entry);
+  await tester.pumpAndSettle();
+  await tester.tap(entry);
+  await tester.pumpAndSettle();
+}
+
+Future<void> tapLanguageControl(WidgetTester tester, Finder control) async {
+  if (control.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(
+      control,
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
+  }
+  await tester.ensureVisible(control);
+  await tester.pumpAndSettle();
+  expect(control.hitTestable(), findsOneWidget);
+  await tester.tap(control);
   await tester.pumpAndSettle();
 }
 
@@ -146,6 +178,119 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     },
+  );
+
+  testWidgets(
+    'Android language lists return to their settings and preserve the selected direction on restart',
+    (tester) async {
+      viewport(tester, const Size(390, 844));
+      await tester.runAsync(VocabularyEngine.load);
+      await tester.pumpWidget(const LingferRoot());
+      await settleResources(tester);
+      await openLanguageSettings(tester, '自动识别 → 中文');
+
+      final source = find.byKey(const ValueKey('reading-source-language'));
+      final target = find.byKey(const ValueKey('reading-target-language'));
+      Finder language(String code) =>
+          find.byKey(ValueKey('reading-language-$code'));
+      await tapLanguageControl(tester, source);
+      expect(language('auto'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: source, matching: find.text('自动识别')),
+        findsOneWidget,
+      );
+
+      await tapLanguageControl(tester, source);
+      await tapLanguageControl(tester, language('fr'));
+      expect(
+        find.descendant(of: source, matching: find.text('法语')),
+        findsOneWidget,
+      );
+      await tapLanguageControl(tester, target);
+      expect(language('auto'), findsNothing);
+      await tapLanguageControl(tester, language('ko'));
+      expect(
+        find.descendant(of: target, matching: find.text('韩语')),
+        findsOneWidget,
+      );
+      await tapLanguageControl(tester, find.byTooltip('关闭语言设置'));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const LingferRoot());
+      await settleResources(tester);
+      await openLanguageSettings(tester, '法语 → 韩语');
+      expect(
+        find.descendant(of: source, matching: find.text('法语')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: target, matching: find.text('韩语')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    'Android language selection and back stay reachable on a narrow screen with large type',
+    (tester) async {
+      viewport(tester, const Size(320, 568));
+      tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.runAsync(VocabularyEngine.load);
+      await tester.pumpWidget(const LingferRoot());
+      await settleResources(tester);
+      await openLanguageSettings(tester, '自动识别 → 中文');
+
+      final target = find.byKey(const ValueKey('reading-target-language'));
+      await tapLanguageControl(tester, target);
+      await tapLanguageControl(
+        tester,
+        find.byKey(const ValueKey('reading-language-hi')),
+      );
+      expect(
+        find.descendant(of: target, matching: find.text('印地语')),
+        findsOneWidget,
+      );
+      await tapLanguageControl(tester, target);
+      expect(find.byKey(const ValueKey('reading-language-auto')), findsNothing);
+      await tapLanguageControl(tester, find.byTooltip('返回语言设置'));
+      await tapLanguageControl(tester, find.byTooltip('关闭语言设置'));
+      expect(find.text('自动识别 → 印地语'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    'iOS language settings still select the target through the original field',
+    (tester) async {
+      viewport(tester, const Size(390, 844));
+      await tester.runAsync(VocabularyEngine.load);
+      await tester.pumpWidget(const LingferRoot());
+      await settleResources(tester);
+      await openLanguageSettings(tester, '自动识别 → 中文');
+
+      expect(
+        find.byType(DropdownButtonFormField<ReadingLanguage>),
+        findsNWidgets(2),
+      );
+      expect(
+        find.byKey(const ValueKey('reading-target-language')),
+        findsNothing,
+      );
+      await tapLanguageControl(tester, find.byKey(const ValueKey('target-zh')));
+      await tapLanguageControl(tester, find.text('日语').last);
+      expect(find.byKey(const ValueKey('target-ja')), findsOneWidget);
+      await tapLanguageControl(tester, find.byTooltip('关闭语言设置'));
+      expect(find.text('自动识别 → 日语'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
   testWidgets('Compact phone keeps entry, level sheet and keyboard usable', (
@@ -320,6 +465,9 @@ void main() {
       await settleResources(tester);
       expect(find.text('渡'), findsNothing);
       expect(find.byType(NavigationBar), findsNothing);
+      final paste = tester.getRect(find.byKey(const ValueKey('entry-粘贴文字')));
+      final camera = tester.getRect(find.byKey(const ValueKey('entry-拍照识别')));
+      expect(paste.bottom, lessThan(camera.top));
       for (final key in ['open-vocabulary', 'open-settings']) {
         final action = find.byKey(ValueKey(key));
         expect(tester.getRect(action).right, lessThanOrEqualTo(320));

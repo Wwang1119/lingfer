@@ -64,7 +64,14 @@ class _Surface extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Material(
     color: LingferColors.paper,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(
+        Theme.of(context).platform == TargetPlatform.android ? 20 : 24,
+      ),
+      side: Theme.of(context).platform == TargetPlatform.android
+          ? const BorderSide(color: Color(0xFFE0E4DF))
+          : BorderSide.none,
+    ),
     clipBehavior: Clip.antiAlias,
     child: Padding(padding: padding, child: child),
   );
@@ -105,85 +112,195 @@ class _StatusLabel extends StatelessWidget {
 }
 
 class _ReadingContextBar extends StatelessWidget {
-  const _ReadingContextBar({required this.controller});
+  const _ReadingContextBar({required this.controller, this.embedded = false});
   final CompanionController controller;
+  final bool embedded;
+
   @override
-  Widget build(BuildContext context) => LingferGlassSurface(
-    radius: 26,
-    shadow: false,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      child: Row(
-        children: [
-          Semantics(
-            label: controller.preferences.mode == ReadingMode.translation
-                ? '阅读方式'
-                : '学习范围',
-            child: TextButton(
-              key: const ValueKey('learning-range'),
-              onPressed: controller.loading
-                  ? null
-                  : () => controller.preferences.mode == ReadingMode.translation
-                        ? showReadingPreferences(context, controller)
-                        : controller.usesEnglishScope
-                        ? _showLevels(context, controller)
-                        : showReadingPreferences(context, controller),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    controller.preferences.mode == ReadingMode.translation
-                        ? '整页对照'
-                        : controller.usesEnglishScope
-                        ? _shortLevel(controller.level)
-                        : controller.preferences.difficulty.label,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: LingferColors.ink,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Icon(
-                    CupertinoIcons.chevron_down,
-                    size: 10,
-                    color: LingferColors.muted,
-                  ),
-                ],
-              ),
+  Widget build(BuildContext context) {
+    final translation = controller.preferences.mode == ReadingMode.translation;
+    final scopeLabel = translation
+        ? '阅读方式'
+        : embedded && !controller.usesEnglishScope
+        ? '学习难度'
+        : '学习范围';
+    final scope = translation
+        ? '整页对照'
+        : controller.usesEnglishScope
+        ? _shortLevel(controller.level)
+        : controller.preferences.difficulty.label;
+    void openScope() {
+      if (!translation && controller.usesEnglishScope) {
+        _showLevels(context, controller);
+      } else {
+        showReadingPreferences(context, controller);
+      }
+    }
+
+    final language = controller.preferences.directionLabel;
+    void openLanguages() => showReadingPreferences(context, controller);
+    if (embedded) {
+      final scopeButton = _ReadingSettingButton(
+        key: const ValueKey('learning-range'),
+        label: scopeLabel,
+        value: scope,
+        onPressed: controller.loading ? null : openScope,
+      );
+      final languageButton = _ReadingSettingButton(
+        label: '语言方向',
+        value: language,
+        onPressed: openLanguages,
+      );
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 240 ||
+              MediaQuery.textScalerOf(context).scale(14) > 23) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                scopeButton,
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                languageButton,
+              ],
+            );
+          }
+          return IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(flex: 4, child: scopeButton),
+                const VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  indent: 13,
+                  endIndent: 13,
+                  color: LingferColors.line,
+                ),
+                Expanded(flex: 6, child: languageButton),
+              ],
             ),
-          ),
-          Container(height: 16, width: .5, color: LingferColors.line),
-          Expanded(
-            child: TextButton(
-              onPressed: () => showReadingPreferences(context, controller),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      controller.preferences.directionLabel,
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
+          );
+        },
+      );
+    }
+    return LingferGlassSurface(
+      radius: 26,
+      shadow: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        child: Row(
+          children: [
+            Semantics(
+              label: scopeLabel,
+              child: TextButton(
+                key: const ValueKey('learning-range'),
+                onPressed: controller.loading ? null : openScope,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      scope,
                       style: const TextStyle(
                         fontSize: 13,
-                        color: LingferColors.muted,
-                        fontWeight: FontWeight.w400,
+                        color: LingferColors.ink,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Icon(
-                    CupertinoIcons.chevron_down,
-                    size: 10,
-                    color: LingferColors.muted,
-                  ),
-                ],
+                    const SizedBox(width: 6),
+                    const Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 10,
+                      color: LingferColors.muted,
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+            Container(height: 16, width: .5, color: LingferColors.line),
+            Expanded(
+              child: TextButton(
+                onPressed: openLanguages,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        language,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: LingferColors.muted,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 10,
+                      color: LingferColors.muted,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+class _ReadingSettingButton extends StatelessWidget {
+  const _ReadingSettingButton({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onPressed,
+  });
+  final String label;
+  final String value;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => TextButton(
+    style: TextButton.styleFrom(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      minimumSize: const Size(48, 56),
+    ),
+    onPressed: onPressed,
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: LingferType.interfaceText.copyWith(
+                  fontSize: 12,
+                  color: LingferColors.muted,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: LingferType.interfaceText.copyWith(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 4),
+        const Icon(
+          Icons.chevron_right_rounded,
+          size: 18,
+          color: LingferColors.muted,
+        ),
+      ],
     ),
   );
 }
@@ -328,17 +445,33 @@ class _GlassSheet extends StatelessWidget {
   const _GlassSheet({required this.child});
   final Widget child;
   @override
-  Widget build(BuildContext context) => LingferGlassSurface(
-    borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-    shadow: false,
-    child: child,
-  );
+  Widget build(BuildContext context) {
+    const radius = BorderRadius.vertical(top: Radius.circular(30));
+    if (Theme.of(context).platform == TargetPlatform.android) {
+      return Material(
+        color: LingferColors.paper,
+        borderRadius: radius,
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      );
+    }
+    return LingferGlassSurface(
+      borderRadius: radius,
+      shadow: false,
+      child: child,
+    );
+  }
 }
 
 class _SheetHeader extends StatelessWidget {
-  const _SheetHeader({required this.title, this.subtitle});
+  const _SheetHeader({
+    required this.title,
+    this.subtitle,
+    this.showClose = true,
+  });
   final String title;
   final String? subtitle;
+  final bool showClose;
   @override
   Widget build(BuildContext context) => Column(
     children: [
@@ -377,15 +510,16 @@ class _SheetHeader extends StatelessWidget {
                 ],
               ),
             ),
-            IconButton(
-              tooltip: '关闭',
-              onPressed: () => Navigator.pop(context),
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0x0D747480),
-                foregroundColor: LingferColors.muted,
+            if (showClose)
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.pop(context),
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0x0D747480),
+                  foregroundColor: LingferColors.muted,
+                ),
+                icon: const Icon(CupertinoIcons.xmark, size: 18),
               ),
-              icon: const Icon(CupertinoIcons.xmark, size: 18),
-            ),
           ],
         ),
       ),

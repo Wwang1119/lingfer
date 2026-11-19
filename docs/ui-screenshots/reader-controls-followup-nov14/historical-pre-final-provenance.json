@@ -1,0 +1,198 @@
+{
+  "candidate": "2.1.1+14",
+  "date": "2026-11-14",
+  "timeZone": "Asia/Macau",
+  "captureGroup": "Flutter library and book reader on isolated simulator",
+  "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+  "resultBundle": "/private/tmp/lingfer-toolchain/reader-followup-simulator-ui.xcresult",
+  "log": "/private/tmp/lingfer-toolchain/reader-followup-simulator-ui.log",
+  "result": "Passed",
+  "passedTests": 1,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "caseDurationSeconds": 26.02,
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+    "deviceName": "Lingfer Controls Nov14",
+    "modelName": "iPhone 18 Pro",
+    "osBuildNumber": "24B8117",
+    "osVersion": "27.2",
+    "platform": "iOS Simulator"
+  },
+  "screenshots": [
+    {
+      "file": "nov14-public-domain-prose.png",
+      "sourceAttachment": "DC6E0913-DF47-4292-AB72-1788135860F3.png",
+      "sourceSuggestedName": "nov14-public-domain-prose_0_4AB34073-0910-4C1D-9918-254CA6FB8C35.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794656097.183,
+      "capturedAt": "2026-11-14T19:34:57.183000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "cb0c4aaf184a3873551cd58540e9f1cfcd2b649744a6a4625362749727e1f88c",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-reader-level-sheet.png",
+      "sourceAttachment": "9FA1E128-F9EF-46E8-8C2A-2F5D23BBCB9F.png",
+      "sourceSuggestedName": "nov14-reader-level-sheet_0_930CA205-85AC-4E9D-8581-EF3C0D3FECFD.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794656091.64,
+      "capturedAt": "2026-11-14T19:34:51.640000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "0262a27079dcf06de3f4aae977d3f9bb5f639a5a7995d4e887712619c6d6205e",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-public-domain-reader-controls.png",
+      "sourceAttachment": "95CAA969-632F-4923-8168-5102F134A0A4.png",
+      "sourceSuggestedName": "nov14-public-domain-reader-controls_0_CD00B275-4AD0-4AF1-8E1D-A059A4512719.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794656088.892,
+      "capturedAt": "2026-11-14T19:34:48.892000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "b7611ac1fe43a07b717830efc69d8ca88bfa9df90ac0b18d1d7de7537999525f",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-public-domain-reader.png",
+      "sourceAttachment": "B1D2A4B4-8AE7-4B2B-A754-530B32152930.png",
+      "sourceSuggestedName": "nov14-public-domain-reader_0_964AA41F-F38C-492E-AA0E-32BCD73AE0E5.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794656088.476,
+      "capturedAt": "2026-11-14T19:34:48.476000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "fff37990d3941987c13ae2eac39b43457b5613ed8c5251cfe1c7f86b2c4402b0",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-fresh-install-public-domain-library.png",
+      "sourceAttachment": "6353544A-ACCD-4FEF-9840-3FC1F5116C87.png",
+      "sourceSuggestedName": "nov14-fresh-install-public-domain-library_0_1918B2D5-DB57-4ED1-98A1-7504E12C9BB7.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794656086.863,
+      "capturedAt": "2026-11-14T19:34:46.863000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "5097be0060cc0ddb5c7e1c68915f05e6f3bd10d87ea4091a4b3a8fd51eeabdd4",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-fresh-install-home.png",
+      "sourceAttachment": "C74CCEAA-C9AC-4DD4-9D9E-9146C6F5AFC7.png",
+      "sourceSuggestedName": "nov14-fresh-install-home_0_F01E2818-DC67-4897-9500-17459324221A.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794656084.688,
+      "capturedAt": "2026-11-14T19:34:44.688000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "55abfc3aaee119f5b517cbf27135fff416372cb259ceca0d9258fd0ce2c0b003",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+      "modified": false
+    }
+  ],
+  "testReportedProse": {
+    "characters": 490,
+    "glossVisible": true
+  },
+  "limits": [
+    "These are actual simulator screenshots, not physical iPhone screenshots.",
+    "This case exercises first-launch library, Alice and book controls; it does not verify cross-App capture, PiP, audio, Dynamic Island or real-device cache cleanup.",
+    "Only Alice is opened by this case; the other two public-domain titles are checked as visible.",
+    "No prior screenshot folder was overwritten; all six PNGs are copied byte-for-byte without retouching, cropping, compositing or added text."
+  ],
+  "additionalCaptures": [
+    {
+      "captureGroup": "Native reading setup with simulator system dark appearance",
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "resultBundle": "/private/tmp/lingfer-toolchain/reader-followup-dark-controls.xcresult",
+      "log": "/private/tmp/lingfer-toolchain/reader-followup-dark-controls.log",
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "caseDurationSeconds": 36.845,
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+        "deviceName": "Lingfer Controls Nov14",
+        "modelName": "iPhone 18 Pro",
+        "osBuildNumber": "24B8117",
+        "osVersion": "27.2",
+        "platform": "iOS Simulator"
+      },
+      "simulatorSystemAppearance": "dark (set by root before this test)",
+      "nativeHostAppearance": "light (overrideUserInterfaceStyle = .light)",
+      "screenshots": [
+        {
+          "file": "store-ios-live-ready-learning.png",
+          "sourceAttachment": "99ADBBE7-E2E1-48C2-8F63-A120D8318010.png",
+          "sourceSuggestedName": "store-ios-live-ready-learning_0_B99A320C-6F92-41B0-927E-64972EEFE021.png",
+          "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+          "timestamp": 1794656198.491,
+          "capturedAt": "2026-11-14T19:36:38.491000+08:00",
+          "dimensions": [
+            1206,
+            2622
+          ],
+          "sha256": "ca1c9bc4d910c1fffb6e4e553355c5e55077917bb9857a353ea960d8b750f140",
+          "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+          "modified": false
+        },
+        {
+          "file": "store-ios-live-ready-independent-controls.png",
+          "sourceAttachment": "C0F81C63-7B51-49A3-B063-780A7B039132.png",
+          "sourceSuggestedName": "store-ios-live-ready-independent-controls_0_22A11C46-B412-4D3D-970A-D543BF8174A9.png",
+          "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+          "timestamp": 1794656195.59,
+          "capturedAt": "2026-11-14T19:36:35.590000+08:00",
+          "dimensions": [
+            1206,
+            2622
+          ],
+          "sha256": "38973abcfb697848d777efe6dc0b24876f13fd5fb67d4a0a1816f3f42687cb20",
+          "source": "XCUIScreen.main.screenshot() original PNG exported from XCResult",
+          "modified": false
+        }
+      ],
+      "limits": [
+        "Exercises independent preparation controls and their presentation only.",
+        "Does not start screen capture or establish physical PiP startup, audio, mode-switch fluidity or cache cleanup.",
+        "The duplicate store-ios-current-home attachment was intentionally not exported."
+      ]
+    }
+  ],
+  "snapshotStatus": "Before final explicit annotation, return-arrow and compact-menu corrections; retained as historical evidence.",
+  "finalCandidateEvidence": false,
+  "supersedingChanges": [
+    "Explicit generated annotation ranges in both horizontal and vertical readers",
+    "Original source parentheses keep prose styling",
+    "44pt chevron return and fixed-width management completion action",
+    "Removal of the verbose book-range subtitle"
+  ],
+  "localPngFilesReplacedByFinal": true,
+  "historicalSourceBundlesOnly": [
+    "/private/tmp/lingfer-toolchain/reader-followup-simulator-ui.xcresult",
+    "/private/tmp/lingfer-toolchain/reader-followup-dark-controls.xcresult"
+  ]
+}

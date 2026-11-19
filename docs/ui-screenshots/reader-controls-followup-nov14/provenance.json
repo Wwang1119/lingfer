@@ -1,0 +1,207 @@
+{
+  "candidate": "2.1.1+14",
+  "snapshotStatus": "Final simulator evidence after explicit annotation, return-arrow and compact-menu corrections",
+  "finalCandidateEvidence": true,
+  "date": "2026-11-14",
+  "timeZone": "Asia/Macau",
+  "resultBundle": "/private/tmp/lingfer-toolchain/reader-followup-final-simulator.xcresult",
+  "log": "/private/tmp/lingfer-toolchain/reader-followup-final-simulator.log",
+  "result": "Passed",
+  "passedTests": 2,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+    "deviceName": "Lingfer Controls Nov14",
+    "modelName": "iPhone 18 Pro",
+    "osBuildNumber": "24B8117",
+    "osVersion": "27.2",
+    "platform": "iOS Simulator"
+  },
+  "testRuns": [
+    {
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "caseDurationSeconds": 24.935,
+      "files": [
+        "nov14-public-domain-prose.png",
+        "nov14-reader-level-sheet.png",
+        "nov14-public-domain-reader-controls.png",
+        "nov14-public-domain-reader.png",
+        "nov14-fresh-install-public-domain-library.png",
+        "nov14-fresh-install-home.png"
+      ]
+    },
+    {
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "result": "Passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "caseDurationSeconds": 31.677,
+      "files": [
+        "store-ios-live-ready-learning.png",
+        "store-ios-live-ready-independent-controls.png"
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "nov14-public-domain-prose.png",
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "sourceAttachment": "FA823763-2BC9-4F11-B14F-189CC50CFFBB.png",
+      "sourceSuggestedName": "nov14-public-domain-prose_0_52DA5D17-125C-4294-A9F3-904709E292B7.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657115.372,
+      "capturedAt": "2026-11-14T19:51:55.372000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "d496212241150797e79993bacc6813ab6b56b6f134f1e5b9d3ce31d809bc75d4",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-reader-level-sheet.png",
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "sourceAttachment": "18776A0C-5E30-4A93-B1DF-E949EA44E7FF.png",
+      "sourceSuggestedName": "nov14-reader-level-sheet_0_CA5A7173-9451-470E-8AFF-A8201F796545.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657107.313,
+      "capturedAt": "2026-11-14T19:51:47.313000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "a06425f86cac51fc5c41de210fd895b36e194fa22440dca0f745b02098bb5607",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-public-domain-reader-controls.png",
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "sourceAttachment": "6E88FC6E-6C11-4053-BECB-7B330D42055D.png",
+      "sourceSuggestedName": "nov14-public-domain-reader-controls_0_2AF2E0ED-749D-4F27-AED8-001F276DDC91.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657104.671,
+      "capturedAt": "2026-11-14T19:51:44.671000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "ef76c2dc2115d0bef7d2d11cf2a1184c2e03498d87501d585c30c4c95b9c5388",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-public-domain-reader.png",
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "sourceAttachment": "9C7062BC-C5C3-4234-BDAD-7F21B84657B5.png",
+      "sourceSuggestedName": "nov14-public-domain-reader_0_7F110136-35B9-4B4C-B1D9-A57843EE571E.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657104.249,
+      "capturedAt": "2026-11-14T19:51:44.249000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "e02faf03a86d36d1139e23e96e3ab04fb15f7cca37c8e3e90ac9f1da55db9afc",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-fresh-install-public-domain-library.png",
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "sourceAttachment": "25DF2E12-6B0B-4DCB-9D4B-24675F99993B.png",
+      "sourceSuggestedName": "nov14-fresh-install-public-domain-library_0_BD73C16D-A838-49B9-8782-F75A32EBAC63.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657102.734,
+      "capturedAt": "2026-11-14T19:51:42.734000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "226739f9c66fdd34e236e47a81415532962f9f5a3e66511202de7d001e75ba3d",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "nov14-fresh-install-home.png",
+      "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+      "sourceAttachment": "93328A61-B3E7-4010-8C30-A0B0381DFD74.png",
+      "sourceSuggestedName": "nov14-fresh-install-home_0_3EF385F4-85D8-4564-AF6B-21043935D838.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657100.886,
+      "capturedAt": "2026-11-14T19:51:40.886000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "e7c896959f6f5212285f5e5fb00b7890456af3d291182aac4ab6f01fc38c9ffe",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "store-ios-live-ready-learning.png",
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "sourceAttachment": "A1059896-4DEC-4B32-B2D0-7F74A4F60312.png",
+      "sourceSuggestedName": "store-ios-live-ready-learning_0_E216D9EB-0E12-4ABA-B9D5-2E93E58AE799.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657143.73,
+      "capturedAt": "2026-11-14T19:52:23.730000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "6e9ed04286485a691b81e6a47a980c4b84ec8935ffc40054046c33e3eb2a4243",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    },
+    {
+      "file": "store-ios-live-ready-independent-controls.png",
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "sourceAttachment": "FE624A20-AD4A-459A-8223-2F7B32B0094C.png",
+      "sourceSuggestedName": "store-ios-live-ready-independent-controls_0_A5D70193-C5E8-44BD-933A-9814C588C8FC.png",
+      "deviceId": "12656C7B-177E-410E-AA92-E3D4EE23A582",
+      "timestamp": 1794657141.047,
+      "capturedAt": "2026-11-14T19:52:21.047000+08:00",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "70aa2c5e456d83f377c55989649cc5d311fcdf4e7808484a3668f2c92b72c0b3",
+      "source": "XCUIScreen.main.screenshot() original PNG exported from the final XCResult",
+      "modified": false
+    }
+  ],
+  "testReportedProse": {
+    "characters": 490,
+    "glossVisible": true
+  },
+  "nativeHostAppearance": "light (overrideUserInterfaceStyle = .light)",
+  "historicalSnapshot": "historical-pre-final-provenance.json",
+  "limits": [
+    "All eight images come from this one final XCResult.",
+    "These are isolated simulator screenshots, not physical iPhone evidence.",
+    "The native case checks independent preparation controls and does not start screen capture; PiP, audio, cross-App recovery and actual user-device cache cleanup remain unverified.",
+    "Only Alice is opened by the reader case; other public-domain titles are checked as visible.",
+    "Duplicate store-ios-current-home was not exported."
+  ],
+  "releaseSignatureVerification": {
+    "result": "Passed",
+    "method": "codesign --verify --deep --strict",
+    "exitCode": 0,
+    "evidence": "artifacts/reader-controls-nov14-followup/verification.json",
+    "separateFromSimulatorImages": true
+  },
+  "visualReview": {
+    "returnChevronVisible": true,
+    "verboseRangeSubtitlePresent": false,
+    "generatedChineseGlossVisible": "peeped(偷看)",
+    "originalEnglishParenthesesSampleInTheseScreenshots": false,
+    "originalEnglishParenthesesStyleTest": "test/reading_text_annotations_test.dart"
+  }
+}

@@ -96,7 +96,12 @@ abstract final class AiConsentStore {
       await prefs.remove(allowedKey);
       return;
     }
-    await prefs.setInt(versionKey, state.version);
-    await prefs.setBool(allowedKey, state.accepted);
+    // A native reader may inspect the preferences between these two writes.
+    // Publish the choice first so a stale approval cannot become current
+    // while the user's new refusal is being saved.
+    if (!await prefs.setBool(allowedKey, state.accepted) ||
+        !await prefs.setInt(versionKey, state.version)) {
+      throw StateError('Could not persist the AI consent choice');
+    }
   }
 }

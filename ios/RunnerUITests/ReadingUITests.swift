@@ -1223,7 +1223,7 @@ final class ReadingUITests: XCTestCase {
     let system=XCUIApplication(bundleIdentifier:"com.apple.springboard")
     safari.open(try fixtureURL("stable-scroll.html"))
     app.launchEnvironment["LINGFER_LIVE_QA"]="1"
-    app.launchArguments=["--lingfer-live-qa","--qa-preserve-reading","--qa-public-reading-fixture"];app.launch()
+    app.launchArguments=["--lingfer-live-qa","--qa-preserve-reading"];app.launch()
     XCTAssertTrue(button("开启随屏阅读").waitForExistence(timeout:30));button("开启随屏阅读").tap()
     if button("了解，继续").waitForExistence(timeout:2) {button("了解，继续").tap()}
     chooseLiveLanguage(section:"原文语言",value:"英语")
@@ -1237,31 +1237,41 @@ final class ReadingUITests: XCTestCase {
     floating.tap();assertSelected(floating)
     app.buttons["live-start"].tap()
     XCTAssertTrue(system.buttons["共享整个屏幕"].waitForExistence(timeout:12))
-    let authorizedAt=Date();system.buttons["共享整个屏幕"].tap()
-    XCTAssertTrue(app.buttons["live-pause"].waitForExistence(timeout:15),"Authorization must retain the native reading panel and its visible inline preview")
-    XCTAssertTrue(app.buttons["live-stop"].isHittable)
-    XCTAssertFalse(app.buttons["live-start"].exists)
-    print("LINGFER ONE TAP authorizedToPanelMs",Int(Date().timeIntervalSince(authorizedAt)*1000))
+    system.buttons["共享整个屏幕"].tap()
     safari.activate()
     let firstPreviewAt=Date()
     let initialAutomaticPreview=waitForActualLivePiP(in:safari,timeout:30)
-    if !initialAutomaticPreview {
-      // Failure investigation happens only after the full initial deadline.
-      // Returning to Lingfer here cannot turn this failed launch into a pass.
-      print("LINGFER ONE TAP FIRST_TIMEOUT",1)
-      app.activate()
-      let background=app.staticTexts["live-background-diagnostics"]
-      let current=app.staticTexts["live-startup-diagnostics"]
-      if background.waitForExistence(timeout:6) {print("LINGFER ONE TAP FAILURE_BACKGROUND",background.label)}
-      if current.waitForExistence(timeout:6) {print("LINGFER ONE TAP FAILURE_CURRENT",current.label)}
+    let initialObservationMs=Int(Date().timeIntervalSince(firstPreviewAt)*1000)
+    let safariWasForeground=safari.state == .runningForeground
+    if safariWasForeground {
+      screenshot(initialAutomaticPreview ? "first-automatic-pip-safari" : "first-automatic-pip-safari-timeout")
     }
-    XCTAssertTrue(initialAutomaticPreview,"Initial PiP must appear from the normal background flow without returning to Lingfer; later diagnostic foregrounding is not a success")
-    guard initialAutomaticPreview else{return}
-    XCTAssertEqual(safari.state,.runningForeground)
-    print("LINGFER ONE TAP initialPreviewMs",Int(Date().timeIntervalSince(firstPreviewAt)*1000))
-    screenshot("nov14-one-tap-first-automatic-pip")
 
+    // Returning to Lingfer can change PiP state. Inspect the retained AVKit
+    // start count only after capturing the external screen and OCR result.
     app.activate()
+    let current=app.staticTexts["live-startup-diagnostics"]
+    var avkitEvidence="The AVKit start count outside the active app was unavailable."
+    if current.waitForExistence(timeout:6) {
+      let state=current.label
+      print("LINGFER ONE TAP STARTUP",state)
+      let startField="pipStartsOutsideActive="
+      if let entry=state.split(separator:" ").first(where:{$0.hasPrefix(startField)}),
+         let starts=Int(entry.dropFirst(startField.count)) {
+        avkitEvidence="AVKit reported \(starts) start callback(s) outside the active app."
+      }
+    }
+    if !initialAutomaticPreview {
+      let background=app.staticTexts["live-background-diagnostics"]
+      if background.waitForExistence(timeout:6) {print("LINGFER ONE TAP FAILURE_BACKGROUND",background.label)}
+    }
+    XCTAssertTrue(safariWasForeground,"The initial observation must take place with the public article in Safari.")
+    XCTAssertTrue(initialAutomaticPreview,"The first Safari observation did not detect the PiP footer. Inspect the attached Safari screenshot. \(avkitEvidence)")
+    guard initialAutomaticPreview else{return}
+    print("LINGFER ONE TAP initialPreviewMs",initialObservationMs)
+    XCTAssertTrue(app.buttons["live-pause"].waitForExistence(timeout:15),"Authorization must retain the native reading panel.")
+    XCTAssertTrue(app.buttons["live-stop"].isHittable)
+    XCTAssertFalse(app.buttons["live-start"].exists)
     let debug=app.staticTexts["live-preview-debug"]
     XCTAssertTrue(debug.waitForExistence(timeout:8))
     func field(_ key:String)->String {debug.label.components(separatedBy:key+"=").dropFirst().first?.components(separatedBy:" ").first ?? "missing"}
@@ -1272,6 +1282,7 @@ final class ReadingUITests: XCTestCase {
     }
     XCTAssertEqual(field("display"),"floating")
     XCTAssertGreaterThanOrEqual(Int(field("shows")) ?? 0,1)
+    print("LINGFER ONE TAP CONTENT_AT_RETURN pages",field("pages"),"words",field("words"),"loading",field("loading"))
     let requests=field("requests"),pages=field("pages")
     tapOnce(floating,"floating-repeat")
     XCTAssertEqual(field("requests"),requests);XCTAssertEqual(field("pages"),pages)

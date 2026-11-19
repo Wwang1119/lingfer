@@ -1,0 +1,66 @@
+[
+  {
+    "bodySize" : 16,
+    "contentHeight" : 112,
+    "height" : 128,
+    "name" : "word-normal",
+    "pages" : 1,
+    "translationSize" : 17
+  },
+  {
+    "bodySize" : 16,
+    "contentHeight" : 114.66666666666666,
+    "height" : 130.66666666666666,
+    "name" : "long-word-normal",
+    "pages" : 1,
+    "translationSize" : 17
+  },
+  {
+    "bodySize" : 16,
+    "contentHeight" : 115,
+    "height" : 131,
+    "name" : "long-source-normal",
+    "pages" : 1,
+    "translationSize" : 17
+  },
+  {
+    "bodySize" : 16,
+    "contentHeight" : 109,
+    "height" : 125,
+    "name" : "translation-normal",
+    "pages" : 2,
+    "translationSize" : 17
+  },
+  {
+    "bodySize" : 20,
+    "contentHeight" : 105.33333333333333,
+    "height" : 121.33333333333333,
+    "name" : "word-large-type",
+    "pages" : 1,
+    "translationSize" : 23
+  },
+  {
+    "bodySize" : 20,
+    "contentHeight" : 92.333333333333329,
+    "height" : 108.33333333333333,
+    "name" : "long-word-large-type",
+    "pages" : 2,
+    "translationSize" : 23
+  },
+  {
+    "bodySize" : 20,
+    "contentHeight" : 115,
+    "height" : 131,
+    "name" : "long-source-large-type",
+    "pages" : 1,
+    "translationSize" : 23
+  },
+  {
+    "bodySize" : 20,
+    "contentHeight" : 103,
+    "height" : 119,
+    "name" : "translation-large-type",
+    "pages" : 4,
+    "translationSize" : 23
+  }
+]

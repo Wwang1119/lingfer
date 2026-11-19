@@ -2,6 +2,7 @@ import AVFoundation
 import AVKit
 import Combine
 import Flutter
+import OSLog
 #if canImport(ScreenCaptureKit)
 import ScreenCaptureKit
 #endif
@@ -28,6 +29,11 @@ final class LiveReadingSession: NSObject, ObservableObject {
   @Published private(set) var presentationMode:LiveReadingPresentation = .floating
   private var presentation=LivePresentationPolicy()
   var floatingPreviewHidden:Bool {presentation.hidden}
+  var preparingFloatingPreview:Bool {preparing && presentationMode == .floating}
+  private var captureAuthorized=false
+  private var mayStartFloatingPreview:Bool {
+    presentation.wantsFloating && (running || preparing && captureAuthorized)
+  }
   private var choseDefaultPresentation=false
   private var audioPreparing=false
   private var audioReady=false
@@ -53,6 +59,12 @@ final class LiveReadingSession: NSObject, ObservableObject {
   private var startupAudioErrorCode=0
   private var startupAudioResult=0
   private var startupPiPErrorCode=0
+  private var startupCaptureErrorCode=0
+  private var receivedCaptureFrame=false
+  private var pipStartsOutsideActive=0
+  private var startupAttempt=0
+  private var startupTime:TimeInterval=0
+  private static let startupLog=Logger(subsystem:"com.wang.yudu",category:"LiveReadingStartup")
   private var lastStartupDiagnosticsAt:TimeInterval=0
   private var startupTask:UIBackgroundTaskIdentifier = .invalid
   private var startupTaskAttempted=false
@@ -77,7 +89,7 @@ final class LiveReadingSession: NSObject, ObservableObject {
   private var pipRequested=false
   private var pipStarting=false
   private var pipStopRequested=false
-  private var previewRequestRevision=0
+  private var previewRequestTimeout:DispatchWorkItem?
   private var renderScheduled=false
   private var pendingRenderWords:[ShareWord]?
   private var previewHeartbeat: DispatchSourceTimer?
@@ -155,15 +167,19 @@ final class LiveReadingSession: NSObject, ObservableObject {
       .AVSampleBufferDisplayLayerRequiresFlushToResumeDecodingDidChange,
       .AVSampleBufferDisplayLayerFailedToDecode] {
       NotificationCenter.default.publisher(for:name).receive(on:DispatchQueue.main).sink { [weak self] note in
-        guard let self,self.running else{return}
-        if note.name == UIApplication.didBecomeActiveNotification,self.presentation.wantsFloating,self.pip?.isPictureInPictureActive == true {
-          self.presentation.restoreInline();self.stopPreviewForTransition()
+        guard let self,self.running || self.preparingFloatingPreview else{return}
+        if note.name == UIApplication.didBecomeActiveNotification {
+          self.recordStartupDiagnostics("foreground",force:true)
+          if self.previewRequestTimeout != nil {self.clearPreviewRequest()}
+          if self.presentation.wantsFloating,self.pip?.isPictureInPictureActive == true {
+            self.presentation.restoreInline();self.stopPreviewForTransition()
+          }
         }
         self.refreshPreviewIfNeeded();self.render(words:self.model.words)
       }.store(in:&subscriptions)
     }
     NotificationCenter.default.publisher(for:UIApplication.didEnterBackgroundNotification).receive(on:DispatchQueue.main).sink { [weak self] _ in
-      guard let self,self.running,self.presentation.wantsFloating else{return}
+      guard let self,(self.running || self.preparing),self.presentation.wantsFloating else{return}
       self.recordStartupDiagnostics("background",force:true)
       self.armStartupTaskTimeout()
       self.requestAutomaticPreview()
@@ -300,14 +316,30 @@ final class LiveReadingSession: NSObject, ObservableObject {
     host.modalPresentationStyle = .pageSheet
     controller=host;presenter.present(host,animated:true,completion:completion)
   }
-  func dismiss() {controller?.dismiss(animated:true)}
+  func dismiss() {
+    if preparing {cancelPreparation()}
+    controller?.dismiss(animated:true)
+  }
   func start() {
     guard !running else {setPaused(false);return}
     guard !preparing else{return}
     #if canImport(ScreenCaptureKit)
     guard #available(iOS 27.0, *) else {message="实时读屏需要 iOS 27 或以上；当前系统可继续使用分享和截图阅读。";return}
+    pipObservation=nil;pip=nil;pipStarting=false;pipStopRequested=false
+    clearPreviewRequest()
+    startupAttempt += 1;startupTime=ProcessInfo.processInfo.systemUptime
+    captureAuthorized=false;receivedCaptureFrame=false
+    sequence=0;previewStarts=0;pipStartsOutsideActive=0
+    sourceReadyForPreview=false
+    firstBodyKey="";firstBodyConfirmations=0
+    startupLineCount=0;startupCharacterCount=0;startupOCRPasses=0;startupOCRErrorCode=0
+    startupPiPErrorCode=0;startupCaptureErrorCode=0;startupAudioErrorCode=0;startupAudioResult=0
+    lastBackgroundDiagnostics="";lastStartupDiagnosticsAt=0
+    startupTaskAttempted=false
+    presentation.select(presentationMode)
     message="请在系统面板选择共享整个屏幕。"
     preparing=true
+    if preparingFloatingPreview {beginStartupTask();preparePreviewAudio()}
     // Request the activity while our UI is visible, before the system picker
     // takes focus. Cancellation tears it down; it never authorizes capture.
     if #available(iOS 16.2, *),presentationMode == .island {
@@ -316,43 +348,61 @@ final class LiveReadingSession: NSObject, ObservableObject {
       activityActive=ReadingActivityManager.shared.active
     }
     let capture=SystemScreenCapture(session:self)
-    driver=capture;capture.present()
+    driver=capture
+    recordStartupDiagnostics("picker-present",force:true)
+    capture.present()
     #else
     message="系统读屏需要在 iOS 27 或以上的 iPhone 真机开启；模拟器可验证分享和截图阅读。"
     #endif
   }
   func cancelPreparation(message:String="已取消系统读屏授权。") {
-    preparing=false;driver=nil
+    recordStartupDiagnostics("picker-cancelled",force:true)
+    endStartupTask("startup-cancelled")
+    clearPreviewRequest()
+    pip?.canStartPictureInPictureAutomaticallyFromInline=false
+    stopPreviewForTransition()
+    let capture=driver;driver=nil;preparing=false;captureAuthorized=false
+    capture?.stop();releasePreviewAudio()
+    pipObservation=nil;pip=nil;pipStarting=false;pictureInPictureActive=false
+    previewLayer.flushAndRemoveImage()
     if #available(iOS 16.2, *) {ReadingActivityManager.shared.end()}
     activityActive=false;activityMessage="";self.message=message
   }
+  func didAuthorizeCapture() {
+    captureAuthorized=true
+    recordStartupDiagnostics("picker-authorized",force:true)
+    // The filter is the user's authorization. Arm PiP here because the capture
+    // completion handler can arrive after the user has already switched apps.
+    if preparingFloatingPreview,sequence==0 {renderNow(words:[])}
+    requestAutomaticPreview()
+  }
   func didStart() {
-    endStartupTask("startup-reset")
-    startupTaskAttempted=false
+    guard preparing else{return}
     epoch += 1
-    pipObservation=nil;pip=nil;sequence=0;pipStarting=false;pipStopRequested=false
-    previewRequestRevision += 1
     previewPlayback=nil;previewSkipActions=0;previewInteractionUntil=0
-    sourceReadyForPreview=false;acceptedViewportPage=0
-    firstBodyKey="";firstBodyConfirmations=0
-    startupLineCount=0;startupCharacterCount=0;startupOCRPasses=0;startupOCRErrorCode=0;startupAudioErrorCode=0;startupAudioResult=0;startupPiPErrorCode=0
-    lastBackgroundDiagnostics="";lastStartupDiagnosticsAt=0
-    captureSummary="正在读取屏幕正文…";captureCoverageNotice="先识别未被浮窗遮挡的首屏，再显示阅读浮窗。"
+    acceptedViewportPage=0
+    captureSummary="正在读取屏幕正文…";captureCoverageNotice="仅识别当前屏幕；浮窗遮挡的区域可移开后补读。"
     running=true;preparing=false;paused=false;lastText=""
     previewSourceText="";previewLines=[];previewFocus=0;acceptedPages=0
     viewport=LiveReadingViewport();viewportPage=0;viewportSettled=true;selectedWordID=nil;selectedTranslationID=nil;manualSelection=false;missingAnchorFrames=0
-    selectionMovement=0;transientControlsVisible=false;previewRecoveries=0;previewStarts=0;translationIndex=0
+    selectionMovement=0;transientControlsVisible=false;previewRecoveries=0;translationIndex=0
     selectionAnchor.reset();selectionAnchorSource=""
-    presentation.select(presentationMode);activityDetailIndex=0;activityActions=0;lastActivityDetailKey="";deferredLiveText=nil
+    activityDetailIndex=0;activityActions=0;lastActivityDetailKey="";deferredLiveText=nil
     activityVocabularyKey=nil;selectedActivityWordID=nil
     activityVocabulary.words=[];activityVocabulary.loading=false
     model.preservesLiveResults=true
     model.liveTranslationSentenceLimit=2
     model.beginLiveHistory()
-    message=presentationMode == .island ? "读屏已开启，切换到阅读 App 后，长按灵动岛或从通知中心查看。" : "读屏已开启，切换到阅读 App，停稳页面后浮窗自动显示。"
-    // Audio activation needs the foreground permission-completion window. The
-    // video itself still waits for an unobstructed, stable reading frame.
-    if presentation.wantsFloating {beginStartupTask();preparePreviewAudio();requestAutomaticPreview()}
+    if !pictureInPictureActive {
+      message=presentationMode == .island ? "读屏已开启，切换到阅读 App 后，长按灵动岛或从通知中心查看。" : "读屏已开启，切换到阅读 App，停稳后自动识别正文。"
+    }
+    recordStartupDiagnostics("capture-started",force:true)
+    if presentation.wantsFloating {
+      beginStartupTask()
+      if let view=pendingPreviewView {attachPreview(to:view)}
+      renderNow(words:[])
+      requestAutomaticPreview()
+    }
     updateActivity()
     previewHeartbeat?.cancel()
     let heartbeat=DispatchSource.makeTimerSource(queue:.main)
@@ -368,6 +418,8 @@ final class LiveReadingSession: NSObject, ObservableObject {
 
   }
   func captureFailed(_ error:Error) {
+    startupCaptureErrorCode=(error as NSError).code
+    recordStartupDiagnostics("capture-failed",force:true)
     stop()
     message="读屏已结束：\(error.localizedDescription)"
     emit(["kind":"status","running":false,"paused":false]);emit(["kind":"error","message":message])
@@ -383,9 +435,10 @@ final class LiveReadingSession: NSObject, ObservableObject {
     endStartupTask("startup-stop")
     model.finishLiveHistory()
     epoch += 1
-    let current=driver;driver=nil;running=false;preparing=false;paused=false
+    let current=driver;driver=nil;running=false;preparing=false;paused=false;captureAuthorized=false
+    pip?.canStartPictureInPictureAutomaticallyFromInline=false
     current?.stop();model.cancel();activityVocabulary.cancel();activityVocabulary.loading=false;stopPreviewForTransition()
-    pipRequested=false;pipStarting=false;previewRequestRevision += 1
+    clearPreviewRequest();pipStarting=false
     previewHeartbeat?.cancel();previewHeartbeat=nil
     if #available(iOS 16.2, *) {ReadingActivityManager.shared.end()}
     activityActive=false;activityMessage=""
@@ -401,14 +454,19 @@ final class LiveReadingSession: NSObject, ObservableObject {
     frameQueue.async {self.lastScan=0;self.scanBusy=false;self.lastPreviewMasks=[];self.lastPreviewMaskTime=0;self.lastPreviewMaskEpoch = -1}
     emit(["kind":"status","running":false,"paused":false])
   }
-  func receive(_ sample:CMSampleBuffer) {
+  func receive(_ sample:CMSampleBuffer,isCurrentCapture:@escaping()->Bool) {
     guard let pixel=CMSampleBufferGetImageBuffer(sample) else{return}
     frameQueue.async { [weak self] in
       guard let self else{return}
       let now=Date.timeIntervalSinceReferenceDate
       guard now-self.lastScan>=0.6,!self.scanBusy else{return}
-      self.lastScan=now;self.scanBusy=true
+      self.scanBusy=true
       DispatchQueue.main.async {
+        guard isCurrentCapture() else {self.frameQueue.async{self.scanBusy=false};return}
+        if !self.receivedCaptureFrame {
+          self.receivedCaptureFrame=true
+          self.recordStartupDiagnostics("capture-first-frame",force:true)
+        }
         // Capturing our own reader would feed its translations back into OCR.
         guard self.running,!self.paused,UIApplication.shared.applicationState == .background else {self.frameQueue.async{self.scanBusy=false};return}
         // AVKit's controls and PiP restoration change the visible occlusion,
@@ -417,7 +475,10 @@ final class LiveReadingSession: NSObject, ObservableObject {
         let language=self.model.sourceLanguage
         let token=self.epoch
         let floating=self.pictureInPictureActive
-        self.frameQueue.async {self.recognize(pixel,language:language,epoch:token,floating:floating)}
+        self.frameQueue.async {
+          self.lastScan=now
+          self.recognize(pixel,language:language,epoch:token,floating:floating)
+        }
       }
     }
   }
@@ -563,7 +624,7 @@ final class LiveReadingSession: NSObject, ObservableObject {
         self.model.liveHistoryPageKey="\(epoch):\(snapshot.page)"
         self.model.accept(snapshot.text,source:"实时读屏 · 原文留在本机")
         self.refreshCaptureSummary()
-        if self.presentation.wantsFloating {self.requestAutomaticPreview()}
+        if self.acceptedPages==1 {self.recordStartupDiagnostics("first-reading-body",force:true)}
         self.message="已更新当前页面。"
         self.updateActivity()
       }
@@ -576,100 +637,100 @@ final class LiveReadingSession: NSObject, ObservableObject {
   func attachPreview(to view:UIView) {
     // SwiftUI can measure a replacement view off-window or at zero size during
     // scene transitions. Never steal the active PiP layer into that placeholder.
-    guard view.window != nil,view.bounds.width>1,view.bounds.height>1 else{return}
+    guard running || preparingFloatingPreview,view.window != nil,view.bounds.width>1,view.bounds.height>1 else{return}
     pendingPreviewView=view
-    if pip?.isPictureInPictureActive == true,previewSourceView !== view {return}
+    if (pip?.isPictureInPictureActive == true || pipStarting),previewSourceView !== view {return}
     let attachmentChanged=previewSourceView !== view || previewLayer.superlayer !== view.layer || previewLayer.frame != view.bounds
     previewSourceView=view
     if previewLayer.superlayer !== view.layer {previewLayer.removeFromSuperlayer();view.layer.addSublayer(previewLayer)}
     previewLayer.frame=view.bounds
     if attachmentChanged {recordStartupDiagnostics("attach",force:true)}
-    if pip == nil,view.window != nil,view.bounds.width>0,view.bounds.height>0,AVPictureInPictureController.isPictureInPictureSupported() {
+    if pip == nil,AVPictureInPictureController.isPictureInPictureSupported() {
       synchronizePreviewPlayback(count:model.readingMode == "translation" ? translationPages.count : model.words.count,position:previewFocus)
       let source=AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer:previewLayer,playbackDelegate:self)
       pip=AVPictureInPictureController(contentSource:source);pip?.delegate=self
-      pip?.canStartPictureInPictureAutomaticallyFromInline=presentation.wantsFloating && sourceReadyForPreview
+      pip?.canStartPictureInPictureAutomaticallyFromInline=mayStartFloatingPreview
       pip?.requiresLinearPlayback = !(previewPlayback?.canSkip == true && previewTimebase != nil)
       pipObservation=pip?.observe(\.isPictureInPicturePossible,options:[.new]) { [weak self] controller,_ in
         DispatchQueue.main.async {
-          guard let self,self.running,self.presentation.wantsFloating,self.audioReady,self.pipRequested,controller.isPictureInPicturePossible,UIApplication.shared.applicationState == .background else{return}
-          self.startPreparedPreview(controller)
+          guard let self,controller === self.pip else{return}
+          self.recordStartupDiagnostics("pip-possible-changed",force:true)
+          self.startQueuedPreviewIfPossible()
         }
       }
+      recordStartupDiagnostics("pip-controller-created",force:true)
     }
-    if running {
-      if attachmentChanged || sequence==0 {render(words:model.words)}
-      if presentation.wantsFloating,audioReady,pipRequested,pip?.isPictureInPicturePossible == true,UIApplication.shared.applicationState == .background {
-        if let pip {startPreparedPreview(pip)}
-      }
-    }
+    if attachmentChanged || sequence==0 {render(words:model.words)}
+    startQueuedPreviewIfPossible()
   }
-  private func startPreparedPreview(_ controller:AVPictureInPictureController) {
-    guard controller === pip,!pipStarting,!controller.isPictureInPictureActive,running,presentation.wantsFloating,sourceReadyForPreview,audioReady else{return}
-    pipRequested=false;pipStarting=true;controller.startPictureInPicture()
+  func previewLeftWindow(_ view:UIView) {
+    if previewSourceView === view {recordStartupDiagnostics("preview-detached",force:true)}
+  }
+  private func clearPreviewRequest() {
+    pipRequested=false
+    previewRequestTimeout?.cancel();previewRequestTimeout=nil
+  }
+  private func startQueuedPreviewIfPossible() {
+    guard mayStartFloatingPreview,pipRequested,!pipStarting,
+          UIApplication.shared.applicationState == .background else{return}
+    if previewRequestTimeout == nil {
+      let timeout=DispatchWorkItem { [weak self] in
+        guard let self,self.pipRequested else{return}
+        self.recordStartupDiagnostics("pip-request-timeout",force:true)
+        self.clearPreviewRequest()
+        self.endStartupTask("startup-unavailable")
+        self.message="翻译浮窗未能自动打开，请点“显示翻译浮窗”重试。"
+      }
+      previewRequestTimeout=timeout
+      DispatchQueue.main.asyncAfter(deadline:.now()+8,execute:timeout)
+    }
+    guard let pip,!pip.isPictureInPictureActive,pip.isPictureInPicturePossible,audioReady,sequence>0,
+          previewSourceView?.window != nil else{return}
+    clearPreviewRequest();pipStarting=true
+    recordStartupDiagnostics("pip-start-requested",force:true)
+    pip.startPictureInPicture()
   }
   private func stopPreviewForTransition() {
     guard let pip,pip.isPictureInPictureActive || pipStarting else{return}
     pipStopRequested=true;pip.stopPictureInPicture()
   }
   private func requestAutomaticPreview() {
-    // Queue until SwiftUI has attached the visible inline source and AVKit is
-    // ready. Permission completion happens before either is guaranteed ready.
-    guard running,presentation.wantsFloating,sourceReadyForPreview else{return}
-    pipRequested=true
+    guard mayStartFloatingPreview else{return}
+    // The system can promote the waiting card when the app leaves the foreground.
+    // OCR only starts after that transition and updates the card independently.
     pip?.canStartPictureInPictureAutomaticallyFromInline=true
     preparePreviewAudio()
-    if pip?.isPictureInPictureActive == true || pipStarting {pipRequested=false;return}
-    // Keep controls reachable inside Lingfer. The system video is only needed
-    // outside the app; going inline does not discard the chosen presentation.
-    guard UIApplication.shared.applicationState == .background else{return}
-    if audioReady,pip?.isPictureInPicturePossible == true,pip?.isPictureInPictureActive == false {
-      if let pip {startPreparedPreview(pip)}
+    if pip?.isPictureInPictureActive == true || pipStarting {clearPreviewRequest();return}
+    if !pipRequested {
+      pipRequested=true
+      recordStartupDiagnostics("pip-queued",force:true)
     }
-    let token=epoch,revision=previewRequestRevision
-    DispatchQueue.main.asyncAfter(deadline:.now()+8) { [weak self] in
-      guard let self,self.running,self.epoch==token,self.previewRequestRevision==revision,self.presentation.wantsFloating,self.pipRequested,UIApplication.shared.applicationState == .background,self.pip?.isPictureInPictureActive != true else{return}
-      self.pipRequested=false
-      self.endStartupTask("startup-unavailable")
-      self.message="翻译浮窗未能自动打开，请点“显示翻译浮窗”重试；灵动岛与读屏独立运行。"
-    }
+    startQueuedPreviewIfPossible()
   }
   func startPictureInPicture() {
     guard running else {message="请先开启系统读屏。";return}
     if startupTask == .invalid {startupTaskAttempted=false;beginStartupTask()}
     guard AVPictureInPictureController.isPictureInPictureSupported() else {message="这台设备暂不支持画中画，可从通知中心的语渡实时活动查看摘要。";return}
     if presentationMode != .floating || !presentation.wantsFloating {setPresentation(.floating);return}
-    if UIApplication.shared.applicationState != .background {
-      requestAutomaticPreview();message="浮窗已准备，切换至阅读 App 后自动显示。";return
+    if UIApplication.shared.applicationState == .background,pip?.isPictureInPictureActive == true {
+      recoverPreview();message="已重新绘制浮窗，原文与阅读位置保留。";return
     }
-    guard let pip else {requestAutomaticPreview();message="正在准备翻译浮窗…";return}
-    if pip.isPictureInPictureActive {recoverPreview();message="已重新绘制浮窗，原文与阅读位置保留。";return}
-    pip.canStartPictureInPictureAutomaticallyFromInline=true
     render(words:model.words)
-    pip.invalidatePlaybackState()
-    message="正在开启画中画…"
-    preparePreviewAudio()
-    if audioReady,pip.isPictureInPicturePossible {startPreparedPreview(pip)} else {
-      pipRequested=true
-      let revision=previewRequestRevision
-      DispatchQueue.main.asyncAfter(deadline:.now()+5) { [weak self] in
-        guard let self,self.running,self.previewRequestRevision==revision,self.presentation.wantsFloating,self.pipRequested else{return}
-        self.pipRequested=false;self.endStartupTask("startup-unavailable");self.message="画中画当前不可用；读屏仍在继续，可以返回语渡查看词卡。"
-      }
-    }
+    pip?.invalidatePlaybackState()
+    message=UIApplication.shared.applicationState == .background ? "正在开启画中画…" : "浮窗已准备，切换至阅读 App 后自动显示。"
+    requestAutomaticPreview()
   }
   func setPresentation(_ mode:LiveReadingPresentation) {
     // Re-selecting the visible segment must not tear down and recreate AVKit,
     // ActivityKit or the audio session while their prior transition is pending.
-    guard mode != presentationMode || presentation.hidden else{return}
-    previewRequestRevision += 1
+    guard !preparing,mode != presentationMode || presentation.hidden else{return}
     presentation.select(mode);presentationMode=mode
     UserDefaults.standard.set(mode.rawValue,forKey:"lingfer.livePresentation")
-    pip?.canStartPictureInPictureAutomaticallyFromInline=presentation.wantsFloating && sourceReadyForPreview
+    pip?.canStartPictureInPictureAutomaticallyFromInline=running && presentation.wantsFloating
     if running {
       if mode == .island {
         endStartupTask("startup-island")
-        pipRequested=false
+        clearPreviewRequest()
         if pip?.isPictureInPictureActive == true || pipStarting {stopPreviewForTransition()}
         else {releasePreviewAudio()}
         message="已切换灵动岛，读屏继续。长按语渡卡片查看，通知中心也可操作。"
@@ -691,7 +752,7 @@ final class LiveReadingSession: NSObject, ObservableObject {
     reconcilePreviewAudio()
   }
   private func beginStartupTask() {
-    guard running,presentation.wantsFloating,AVPictureInPictureController.isPictureInPictureSupported(),!startupTaskAttempted,startupTask == .invalid,pip?.isPictureInPictureActive != true else{return}
+    guard running || preparingFloatingPreview,presentation.wantsFloating,AVPictureInPictureController.isPictureInPictureSupported(),!startupTaskAttempted,startupTask == .invalid,pip?.isPictureInPictureActive != true else{return}
     startupTaskAttempted=true;startupTaskGeneration += 1
     let generation=startupTaskGeneration
     startupTask=UIApplication.shared.beginBackgroundTask(withName:"Lingfer initial reading preview") { [weak self] in
@@ -721,7 +782,7 @@ final class LiveReadingSession: NSObject, ObservableObject {
     recordStartupDiagnostics(stage,force:true)
   }
   private func reconcilePreviewAudio() {
-    let wanted=previewAudioWanted && running && presentation.wantsFloating
+    let wanted=previewAudioWanted && (running || preparing) && presentation.wantsFloating
     guard !audioPreparing,audioReady != wanted else{return}
     audioPreparing=true
     if !wanted {
@@ -735,7 +796,13 @@ final class LiveReadingSession: NSObject, ObservableObject {
       } else {audioPreparing=false;audioReady=false}
       return
     }
-    do {try AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback,options:[.mixWithOthers])} catch {audioPreparing=false;endStartupTask("startup-audio-failed");message="浮窗音视频会话暂不可用，读屏仍在继续。";return}
+    do {
+      try AVAudioSession.sharedInstance().setCategory(.playback,mode:.moviePlayback,options:[.mixWithOthers])
+    } catch {
+      audioPreparing=false;startupAudioResult = -1;startupAudioErrorCode=(error as NSError).code
+      recordStartupDiagnostics("audio-category-failed",force:true)
+      endStartupTask("startup-audio-failed");message="浮窗音视频会话暂不可用，读屏仍在继续。";return
+    }
     if #available(iOS 27.0, *) {
       AVAudioSession.sharedInstance().activate(options:[]) { [weak self] activated,error in
         DispatchQueue.main.async {
@@ -745,8 +812,8 @@ final class LiveReadingSession: NSObject, ObservableObject {
           self.recordStartupDiagnostics("audio",force:true)
           // Serialize activation and deactivation. A late activation from the
           // prior mode settles first, then reconciles the latest user choice.
-          guard self.previewAudioWanted,self.running,self.presentation.wantsFloating else {self.reconcilePreviewAudio();return}
-          if activated {self.render(words:self.model.words);self.requestAutomaticPreview()}
+          guard self.previewAudioWanted,(self.running || self.preparing),self.presentation.wantsFloating else {self.reconcilePreviewAudio();return}
+          if activated {self.render(words:self.model.words);self.startQueuedPreviewIfPossible()}
           else {self.endStartupTask("startup-audio-failed");self.message="翻译浮窗暂不可用，可继续使用实时活动。"}
         }
       }
@@ -886,18 +953,26 @@ final class LiveReadingSession: NSObject, ObservableObject {
     }
     let ready:Bool
     if #available(iOS 17.4, *) {ready=previewLayer.isReadyForDisplay} else {ready=previewLayer.status == .rendering}
-    return "app=\(UIApplication.shared.applicationState.rawValue) sourceReady=\(sourceReadyForPreview ? 1 : 0) confirmations=\(firstBodyConfirmations) ocrPasses=\(startupOCRPasses) lines=\(startupLineCount) characters=\(startupCharacterCount) settled=\(viewportSettled ? 1 : 0) startupTask=\(startupTask == .invalid ? 0 : 1) startupAttempted=\(startupTaskAttempted ? 1 : 0) audioReady=\(audioReady ? 1 : 0) audioPreparing=\(audioPreparing ? 1 : 0) audioResult=\(startupAudioResult) audioError=\(startupAudioErrorCode) pipRequested=\(pipRequested ? 1 : 0) pipStarting=\(pipStarting ? 1 : 0) possible=\(pip?.isPictureInPicturePossible == true ? 1 : 0) active=\(pip?.isPictureInPictureActive == true ? 1 : 0) sourceWindow=\(window == nil ? 0 : 1) sourceHidden=\(hidden ? 1 : 0) sourceBounds=\(size(source?.bounds)) layerBounds=\(size(previewLayer.bounds)) attached=\(previewLayer.superlayer == nil ? 0 : 1) layerReady=\(ready ? 1 : 0) layerStatus=\(previewLayer.status.rawValue) frames=\(sequence) pages=\(acceptedPages) pipError=\(startupPiPErrorCode) ocrError=\(startupOCRErrorCode)"
+    let elapsed=Int((ProcessInfo.processInfo.systemUptime-startupTime)*1000)
+    return "session=\(startupAttempt) elapsedMs=\(elapsed) app=\(UIApplication.shared.applicationState.rawValue) " +
+      "captureFrame=\(receivedCaptureFrame ? 1 : 0) captureError=\(startupCaptureErrorCode) " +
+      "sourceReady=\(sourceReadyForPreview ? 1 : 0) confirmations=\(firstBodyConfirmations) ocrPasses=\(startupOCRPasses) lines=\(startupLineCount) characters=\(startupCharacterCount) settled=\(viewportSettled ? 1 : 0) " +
+      "startupTask=\(startupTask == .invalid ? 0 : 1) startupAttempted=\(startupTaskAttempted ? 1 : 0) audioReady=\(audioReady ? 1 : 0) audioPreparing=\(audioPreparing ? 1 : 0) audioResult=\(startupAudioResult) audioError=\(startupAudioErrorCode) " +
+      "pipRequested=\(pipRequested ? 1 : 0) pipStarting=\(pipStarting ? 1 : 0) possible=\(pip?.isPictureInPicturePossible == true ? 1 : 0) active=\(pip?.isPictureInPictureActive == true ? 1 : 0) pipStartsOutsideActive=\(pipStartsOutsideActive) " +
+      "sourceWindow=\(window == nil ? 0 : 1) sourceHidden=\(hidden ? 1 : 0) sourceBounds=\(size(source?.bounds)) layerBounds=\(size(previewLayer.bounds)) attached=\(previewLayer.superlayer == nil ? 0 : 1) layerReady=\(ready ? 1 : 0) layerStatus=\(previewLayer.status.rawValue) " +
+      "frames=\(sequence) pages=\(acceptedPages) pipError=\(startupPiPErrorCode) ocrError=\(startupOCRErrorCode)"
   }
   private func recordStartupDiagnostics(_ stage:String,force:Bool=false) {
-    guard diagnosticsEnabled,running else{return}
+    guard running || preparing else{return}
     let background=UIApplication.shared.applicationState == .background
-    guard force || background && !pictureInPictureActive else{return}
+    guard force || diagnosticsEnabled && background && !pictureInPictureActive else{return}
     let now=Date.timeIntervalSinceReferenceDate
     guard force || now-lastStartupDiagnosticsAt>=2 else{return}
     let value="stage=\(stage) \(startupDiagnostics)"
-    if background {lastBackgroundDiagnostics=value}
+    if diagnosticsEnabled,background {lastBackgroundDiagnostics=value}
     lastStartupDiagnosticsAt=now
-    print("LINGFER PIP STARTUP",value)
+    if force {Self.startupLog.notice("\(value,privacy:.public)")}
+    if diagnosticsEnabled {print("LINGFER PIP STARTUP",value)}
   }
   var previewDiagnostics:String {
     let ready:Bool
@@ -1107,10 +1182,11 @@ final class LiveReadingSession: NSObject, ObservableObject {
     }
   }
 
-  private func renderNow(words:[ShareWord]) {
-    guard running else{return}
+  private func renderNow(words currentWords:[ShareWord]) {
+    guard running || preparingFloatingPreview else{return}
     syncActivityVocabulary()
-    let parts=translationPages
+    let words=sourceReadyForPreview ? currentWords : []
+    let parts=sourceReadyForPreview ? translationPages : []
     let count=model.readingMode == "translation" ? parts.count : words.count
     if model.readingMode == "translation" {
       let before=selectedTranslationID
@@ -1186,6 +1262,11 @@ final class LiveReadingSession: NSObject, ObservableObject {
       drawContext(sentence,surface:word.surface,in:CGRect(x:28,y:110,width:744,height:190),ink:ink,accent:accent)
       label(word.surface,CGRect(x:28,y:326,width:744,height:53),43,accent,.semibold)
       label(word.shortTranslation,CGRect(x:28,y:389,width:744,height:54),36,ink)
+    } else if !sourceReadyForPreview {
+      label("等待屏幕正文",CGRect(x:28,y:68,width:744,height:30),24,muted)
+      drawContext("切换到阅读 App，停稳页面后自动识别。",surface:"",in:CGRect(x:28,y:110,width:744,height:190),ink:ink,accent:accent)
+      label(running ? "读屏已开启" : "正在开启读屏",CGRect(x:32,y:340,width:736,height:82),36,accent,.medium)
+      previewContextDescription="等待阅读页面"
     } else {
       label(model.text.isEmpty ? "等待屏幕正文" : "识别预览 · 共 \(model.text.filter{!$0.isWhitespace}.count) 字",CGRect(x:28,y:68,width:744,height:30),24,muted)
       drawContext(model.text.isEmpty ? "切换到阅读 App，停稳页面后自动识别。" : model.text,surface:"",in:CGRect(x:28,y:110,width:744,height:190),ink:ink,accent:accent)
@@ -1207,7 +1288,6 @@ final class LiveReadingSession: NSObject, ObservableObject {
     var format:CMVideoFormatDescription?
     CMVideoFormatDescriptionCreateForImageBuffer(allocator:kCFAllocatorDefault,imageBuffer:pixel,formatDescriptionOut:&format)
     guard let format else{return}
-    sequence += 1
     let time=previewTimebase.map{CMTimebaseGetTime($0)} ?? CMClockGetTime(CMClockGetHostTimeClock())
     var timing=CMSampleTimingInfo(duration:CMTime(value:1,timescale:1),presentationTimeStamp:time,decodeTimeStamp:.invalid)
     var sample:CMSampleBuffer?
@@ -1218,7 +1298,12 @@ final class LiveReadingSession: NSObject, ObservableObject {
       CFDictionarySetValue(item,Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
     }
     if #available(iOS 17.0, *) {previewLayer.sampleBufferRenderer.enqueue(sample)} else {previewLayer.enqueue(sample)}
-    if sequence==1 {pip?.invalidatePlaybackState()}
+    sequence += 1
+    if sequence==1 {
+      pip?.invalidatePlaybackState()
+      recordStartupDiagnostics("preview-first-frame",force:true)
+      startQueuedPreviewIfPossible()
+    }
     publishPreviewDiagnostics()
   }
   private func publishPreviewDiagnostics() {
@@ -1242,6 +1327,7 @@ private final class SystemScreenCapture:NSObject,LiveCaptureDriving,SCContentSha
   weak var session:LiveReadingSession?
   private var stream:SCStream?
   private var stopped = false
+  private let sampleQueue=DispatchQueue(label:"lingfer.screen.samples")
   init(session:LiveReadingSession) {self.session=session;super.init()}
   func present() {
     let picker=SCContentSharingPicker.shared
@@ -1249,33 +1335,59 @@ private final class SystemScreenCapture:NSObject,LiveCaptureDriving,SCContentSha
     var config=SCContentSharingPickerConfiguration();config.showsMicrophoneControl=false
     picker.defaultConfiguration=config;picker.add(self);picker.isActive=true;picker.present()
   }
-  func contentSharingPicker(_ picker:SCContentSharingPicker,didCancelFor stream:SCStream?) {picker.remove(self);picker.isActive=false;session?.cancelPreparation()}
-  func contentSharingPickerStartDidFailWithError(_ error:Error) {session?.captureFailed(error)}
+  func contentSharingPicker(_ picker:SCContentSharingPicker,didCancelFor stream:SCStream?) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self,!self.stopped,self.session?.preparing == true else{return}
+      self.session?.cancelPreparation()
+    }
+  }
+  func contentSharingPickerStartDidFailWithError(_ error:Error) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self,!self.stopped else{return}
+      self.session?.captureFailed(error)
+    }
+  }
   func contentSharingPicker(_ picker:SCContentSharingPicker,didUpdateWith filter:SCContentFilter,for stream:SCStream?) {
+    DispatchQueue.main.async { [weak self] in self?.startCapture(with:filter) }
+  }
+  private func startCapture(with filter:SCContentFilter) {
     guard !stopped else {return}
+    session?.didAuthorizeCapture()
     if let current=self.stream {current.stopCapture(completionHandler:nil)}
     let config=SCStreamConfiguration();config.width=1080
     config.height=Int(1080*max(1,filter.contentRect.height)/max(1,filter.contentRect.width))
     let next=SCStream(filter:filter,configuration:config,delegate:self)
-    do {try next.addStreamOutput(self,type:.screen,sampleHandlerQueue:DispatchQueue(label:"lingfer.screen.samples"))} catch {session?.captureFailed(error);return}
+    do {try next.addStreamOutput(self,type:.screen,sampleHandlerQueue:sampleQueue)} catch {session?.captureFailed(error);return}
     self.stream=next
     next.startCapture { [weak self] error in DispatchQueue.main.async {
       guard let self,!self.stopped,self.stream === next else {next.stopCapture(completionHandler:nil);return}
       if let error {self.session?.captureFailed(error)} else {self.session?.didStart()}
     }}
   }
-  func stream(_ stream:SCStream,didOutputSampleBuffer sampleBuffer:CMSampleBuffer,of type:SCStreamOutputType) {if type == .screen,!stopped,self.stream === stream {session?.receive(sampleBuffer)}}
+  func stream(_ stream:SCStream,didOutputSampleBuffer sampleBuffer:CMSampleBuffer,of type:SCStreamOutputType) {
+    guard type == .screen else{return}
+    session?.receive(sampleBuffer) { [weak self] in
+      guard let self else{return false}
+      return !self.stopped && self.stream === stream
+    }
+  }
   func stream(_ stream:SCStream,didStopWithError error:Error) {DispatchQueue.main.async {if !self.stopped,self.stream === stream {self.session?.captureFailed(error)}}}
   func stop() {stopped=true;SCContentSharingPicker.shared.remove(self);SCContentSharingPicker.shared.isActive=false;stream?.stopCapture(completionHandler:nil);stream=nil}
 }
 #endif
 
 extension LiveReadingSession:AVPictureInPictureSampleBufferPlaybackDelegate,AVPictureInPictureControllerDelegate {
-  func pictureInPictureControllerDidStartPictureInPicture(_ controller:AVPictureInPictureController) {
+  func pictureInPictureControllerWillStartPictureInPicture(_ controller:AVPictureInPictureController) {
     guard controller === pip else{return}
+    clearPreviewRequest();pipStarting=true
+    recordStartupDiagnostics("pip-will-start",force:true)
+  }
+  func pictureInPictureControllerDidStartPictureInPicture(_ controller:AVPictureInPictureController) {
+    guard controller === pip else{controller.stopPictureInPicture();return}
     pipStarting=false
+    if mayStartFloatingPreview,UIApplication.shared.applicationState != .active {pipStartsOutsideActive += 1}
     recordStartupDiagnostics("pip-started",force:true)
-    guard running,presentation.wantsFloating else {stopPreviewForTransition();return}
+    guard mayStartFloatingPreview else {stopPreviewForTransition();return}
     if UIApplication.shared.applicationState == .active {presentation.restoreInline();stopPreviewForTransition();return}
     endStartupTask("startup-pip-ready")
     previewStarts += 1
@@ -1287,9 +1399,11 @@ extension LiveReadingSession:AVPictureInPictureSampleBufferPlaybackDelegate,AVPi
   func pictureInPictureControllerDidStopPictureInPicture(_ controller:AVPictureInPictureController) {
     guard controller === pip else{return}
     let requestedStop=pipStopRequested
-    pipStopRequested=false;pipStarting=false;pictureInPictureActive=false;pipRequested=false
+    pipStopRequested=false;pipStarting=false;pictureInPictureActive=false
+    clearPreviewRequest()
     if !requestedStop {presentation.didStop(inForeground:UIApplication.shared.applicationState != .background)}
-    controller.canStartPictureInPictureAutomaticallyFromInline=running && presentation.wantsFloating && sourceReadyForPreview
+    controller.canStartPictureInPictureAutomaticallyFromInline=mayStartFloatingPreview
+    recordStartupDiagnostics("pip-stopped",force:true)
     if let view=pendingPreviewView {attachPreview(to:view)}
     if !presentation.wantsFloating {releasePreviewAudio()}
     if running {
@@ -1318,6 +1432,7 @@ extension LiveReadingSession:AVPictureInPictureSampleBufferPlaybackDelegate,AVPi
   func pictureInPictureController(_ controller:AVPictureInPictureController,failedToStartPictureInPictureWithError error:Error) {
     guard controller === pip else{return}
     pipStarting=false
+    clearPreviewRequest()
     startupPiPErrorCode=(error as NSError).code;recordStartupDiagnostics("pip-failed",force:true)
     endStartupTask("startup-pip-failed")
     if running,presentation.wantsFloating {message="画中画未能开启：\(error.localizedDescription)。读屏继续，可回到阅读面板重试。"}
@@ -1341,7 +1456,10 @@ private struct LivePreview:UIViewRepresentable {
   private class PreviewView:UIView {
     weak var session:LiveReadingSession?
     override func layoutSubviews(){super.layoutSubviews();session?.attachPreview(to:self)}
-    override func didMoveToWindow(){super.didMoveToWindow();if window != nil {session?.attachPreview(to:self)}}
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      if window != nil {session?.attachPreview(to:self)} else {session?.previewLeftWindow(self)}
+    }
   }
 }
 private struct LiveReadingHost:View {
@@ -1350,7 +1468,9 @@ private struct LiveReadingHost:View {
   @Namespace private var displaySelection
   var body:some View {
     Group {
-      if !session.running && !showingPrevious {
+      // Mount the inline source while the picker is up. Capture completion
+      // keeps this view identity even when the user immediately switches apps.
+      if !session.running && !session.preparingFloatingPreview && !showingPrevious {
         ReadingStartView(model:session.model,message:session.message,start:{session.start()},close:{session.dismiss()},previous:session.model.hasLiveHistory || !session.model.text.isEmpty ? {
           if session.model.hasLiveHistory {_ = session.model.restoreLastLiveHistory()}
           showingPrevious=true
@@ -1382,7 +1502,7 @@ private struct LiveReadingHost:View {
   }
   private var compactControls:some View {
     HStack(spacing:12) {
-      if session.running {
+      if session.running || session.preparingFloatingPreview {
         LivePreview(session:session).frame(width:80,height:50).clipShape(RoundedRectangle(cornerRadius:12)).accessibilityLabel("实时阅读画中画预览")
         Text(session.paused ? "已暂停" : "随屏阅读中").font(.subheadline).frame(maxWidth:.infinity,alignment:.leading)
         Button(session.paused ? "继续识别" : "暂停识别"){session.setPaused(!session.paused)}.accessibilityIdentifier("live-pause")
@@ -1392,11 +1512,12 @@ private struct LiveReadingHost:View {
         Button("开启系统读屏"){session.start()}.frame(maxWidth:.infinity,minHeight:44).accessibilityIdentifier("live-start")
       }
     }.font(.subheadline).buttonStyle(.plain).foregroundStyle(NativeReadingTheme.accent).padding(.horizontal,18).padding(.vertical,6).background(NativeReadingTheme.background)
+      .disabled(session.preparing)
   }
   private var controls:some View {
     VStack(alignment:.leading,spacing:10) {
       displayPicker
-      if !session.running {
+      if !session.running && !session.preparingFloatingPreview {
         Button("开启系统读屏"){session.start()}
           .font(.body.weight(.semibold)).frame(maxWidth:.infinity,minHeight:52)
           .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).accessibilityIdentifier("live-start")
@@ -1449,5 +1570,6 @@ private struct LiveReadingHost:View {
         }.font(.caption)
       }
     }.padding(.horizontal,18).padding(.vertical,12).background(NativeReadingTheme.background)
+      .disabled(session.preparing)
   }
 }

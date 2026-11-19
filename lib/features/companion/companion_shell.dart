@@ -19,6 +19,7 @@ import '../../screens/scan/scan_reader_page.dart';
 import '../../services/imported_file_store.dart';
 import '../../services/asset_books_service.dart';
 import '../../services/native_image_ocr.dart';
+import 'android_reading_cover.dart';
 import 'companion_controller.dart';
 import 'companion_review.dart';
 import 'learning_backup_controls.dart';
@@ -34,6 +35,7 @@ import 'annotations/annotated_image_reader.dart';
 import 'annotations/anchored_text.dart';
 
 part 'companion_components.dart';
+part 'android_library.dart';
 part 'companion_reader.dart';
 part 'companion_sheets.dart';
 
@@ -102,10 +104,27 @@ class _CompanionShellState extends State<CompanionShell>
       if (MediaQuery.sizeOf(context).width < 160) {
         return const SizedBox.shrink();
       }
+      final androidStyle = Theme.of(context).platform == TargetPlatform.android;
+      final compactHeader =
+          MediaQuery.sizeOf(context).width <
+          220 + MediaQuery.textScalerOf(context).scale(64);
+      final settings = IconButton(
+        key: const ValueKey('open-settings'),
+        tooltip: '设置',
+        onPressed: () => _openDestination(saved: false),
+        icon: Icon(
+          androidStyle
+              ? Icons.tune_rounded
+              : CupertinoIcons.slider_horizontal_3,
+          size: 21,
+          color: LingferColors.ink,
+        ),
+      );
       return AnnotatedRegion<SystemUiOverlayStyle>(
         value: SystemUiOverlayStyle.dark.copyWith(
           statusBarColor: Colors.transparent,
           systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness: Brightness.dark,
           systemNavigationBarDividerColor: Colors.transparent,
           systemNavigationBarContrastEnforced: false,
         ),
@@ -125,36 +144,55 @@ class _CompanionShellState extends State<CompanionShell>
                             child: Text(
                               '语渡',
                               style: LingferType.brandHeading.copyWith(
-                                fontSize: 32,
+                                fontSize: androidStyle ? 36 : 32,
                               ),
                             ),
                           ),
-                          TextButton(
-                            key: const ValueKey('open-vocabulary'),
-                            onPressed: () => _openDestination(saved: true),
-                            child: const Text(
-                              '生词本',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w500,
-                                color: LingferColors.ink,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          LingferGlassSurface(
-                            radius: 25,
-                            child: IconButton(
-                              key: const ValueKey('open-settings'),
-                              tooltip: '设置',
-                              onPressed: () => _openDestination(saved: false),
+                          if (androidStyle && compactHeader)
+                            IconButton(
+                              key: const ValueKey('open-vocabulary'),
+                              tooltip: '生词本',
+                              onPressed: () => _openDestination(saved: true),
                               icon: const Icon(
-                                CupertinoIcons.slider_horizontal_3,
+                                Icons.bookmarks_outlined,
                                 size: 21,
-                                color: LingferColors.ink,
+                              ),
+                            )
+                          else
+                            TextButton(
+                              key: const ValueKey('open-vocabulary'),
+                              onPressed: () => _openDestination(saved: true),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (androidStyle) ...[
+                                    const Icon(
+                                      Icons.bookmark_border_rounded,
+                                      size: 18,
+                                      color: LingferColors.accent,
+                                    ),
+                                    const SizedBox(width: 5),
+                                  ],
+                                  const Text(
+                                    '生词本',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                      color: LingferColors.ink,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
+                          const SizedBox(width: 8),
+                          if (androidStyle)
+                            Material(
+                              color: const Color(0xFFE9EEEA),
+                              shape: const CircleBorder(),
+                              child: settings,
+                            )
+                          else
+                            LingferGlassSurface(radius: 25, child: settings),
                         ],
                       ),
                     ),
@@ -184,12 +222,15 @@ class _ReadHome extends StatelessWidget {
   Widget build(BuildContext context) {
     final shelf = AppScope.of(context).shelf;
     final android = controller.bridge.supported;
+    final androidStyle = Theme.of(context).platform == TargetPlatform.android;
     return _PageFrame(
       scrollKey: const ValueKey('reading-home-scroll'),
       children: [
-        _ReadingContextBar(controller: controller),
-        const AiConsentEntry(firstUseOnly: true),
-        const SizedBox(height: 18),
+        if (!androidStyle) ...[
+          _ReadingContextBar(controller: controller),
+          const AiConsentEntry(firstUseOnly: true),
+          const SizedBox(height: 18),
+        ],
         LayoutBuilder(
           builder: (context, constraints) {
             final primary = _ReadingEntry(
@@ -215,6 +256,7 @@ class _ReadHome extends StatelessWidget {
             );
           },
         ),
+        if (androidStyle) const AiConsentEntry(firstUseOnly: true),
         if (controller.error != null) ...[
           const SizedBox(height: 16),
           _InfoStrip(
@@ -279,8 +321,10 @@ class _ReadHome extends StatelessWidget {
         const SizedBox(height: 30),
         _SectionHeading(title: '本地资料', trailing: '${shelf.length} 份'),
         const SizedBox(height: 6),
-        const Text(
-          '只显示你主动导入、保存或加入阅读的资料，不会扫描手机里的其他文件。',
+        Text(
+          Theme.of(context).platform == TargetPlatform.android
+              ? '只列出你主动导入或加入阅读的资料。'
+              : '只显示你主动导入、保存或加入阅读的资料，不会扫描手机里的其他文件。',
           style: TextStyle(
             fontSize: 12,
             height: 1.6,
@@ -288,7 +332,16 @@ class _ReadHome extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        if (shelf.isEmpty)
+        if (shelf.isEmpty &&
+            Theme.of(context).platform == TargetPlatform.android)
+          _AndroidEmptyLibrary(
+            onImport: controller.loading
+                ? null
+                : () => _importFile(context, controller),
+            onReadSample: () =>
+                _openText(context, controller, _sampleText, '英文试读'),
+          )
+        else if (shelf.isEmpty)
           _Surface(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -472,59 +525,62 @@ class _BundledBooksSection extends StatelessWidget {
         style: TextStyle(fontSize: 12, height: 1.6, color: LingferColors.muted),
       ),
       const SizedBox(height: 12),
-      _Surface(
-        padding: EdgeInsets.zero,
-        child: Column(
-          children: [
-            for (
-              var i = 0;
-              i < AssetBooksService.publicDomainCatalog.length;
-              i++
-            ) ...[
-              if (i > 0) const Divider(height: 1, indent: 18, endIndent: 18),
-              ListTile(
-                key: ValueKey(
-                  'bundled-book-${AssetBooksService.publicDomainCatalog[i].assetPath}',
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 12,
-                ),
-                leading: const Icon(
-                  CupertinoIcons.book,
-                  size: 26,
-                  color: LingferColors.accent,
-                ),
-                title: Text(
-                  AssetBooksService.publicDomainCatalog[i].title,
-                  style: LingferType.interfaceHeading.copyWith(
-                    fontSize: 17,
-                    height: 1.5,
+      if (Theme.of(context).platform == TargetPlatform.android)
+        _AndroidBookShelf(onOpen: (entry) => _open(context, entry))
+      else
+        _Surface(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              for (
+                var i = 0;
+                i < AssetBooksService.publicDomainCatalog.length;
+                i++
+              ) ...[
+                if (i > 0) const Divider(height: 1, indent: 18, endIndent: 18),
+                ListTile(
+                  key: ValueKey(
+                    'bundled-book-${AssetBooksService.publicDomainCatalog[i].assetPath}',
                   ),
-                ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 5),
-                  child: Text(
-                    '${AssetBooksService.publicDomainCatalog[i].author} · 英文全本',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      height: 1.6,
-                      color: LingferColors.muted,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 12,
+                  ),
+                  leading: const Icon(
+                    CupertinoIcons.book,
+                    size: 26,
+                    color: LingferColors.accent,
+                  ),
+                  title: Text(
+                    AssetBooksService.publicDomainCatalog[i].title,
+                    style: LingferType.interfaceHeading.copyWith(
+                      fontSize: 17,
+                      height: 1.5,
                     ),
                   ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Text(
+                      '${AssetBooksService.publicDomainCatalog[i].author} · 英文全本',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.6,
+                        color: LingferColors.muted,
+                      ),
+                    ),
+                  ),
+                  trailing: const Icon(
+                    CupertinoIcons.chevron_right,
+                    size: 15,
+                    color: LingferColors.muted,
+                  ),
+                  onTap: () =>
+                      _open(context, AssetBooksService.publicDomainCatalog[i]),
                 ),
-                trailing: const Icon(
-                  CupertinoIcons.chevron_right,
-                  size: 15,
-                  color: LingferColors.muted,
-                ),
-                onTap: () =>
-                    _open(context, AssetBooksService.publicDomainCatalog[i]),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
-      ),
       TextButton(
         onPressed: () => _showSources(context),
         child: const Text('书目与来源'),
@@ -561,17 +617,89 @@ class _ReadingEntryState extends State<_ReadingEntry> {
   Widget build(BuildContext context) {
     final live = widget.android || Platform.isIOS;
     final running = live && widget.controller.running;
+    final androidStyle = Theme.of(context).platform == TargetPlatform.android;
+    final title = live ? '随屏阅读' : '截图阅读';
+    final description =
+        widget.controller.preferences.mode == ReadingMode.translation
+        ? (widget.android ? '停稳后预译当前页。轻点段落旁的页边看译文，在正文上滑动翻页。' : '开启系统读屏后自动翻译，画中画预览部分译文。')
+        : widget.android
+        ? '释义就在原词旁。想读整段，点书本按钮选段翻译。'
+        : Platform.isIOS
+        ? '开启系统读屏后自动识别，画中画查看当前词义。'
+        : '在原词旁看释义，点按理解原句。';
+    final action = FilledButton(
+      key: const ValueKey('primary-reading-action'),
+      onPressed: busy || widget.controller.loading ? null : _activate,
+      style: androidStyle
+          ? FilledButton.styleFrom(
+              foregroundColor: AndroidReadingCover.ink,
+              backgroundColor: AndroidReadingCover.paper,
+              disabledBackgroundColor: const Color(0xFFC0D1CC),
+              disabledForegroundColor: AndroidReadingCover.ink,
+              minimumSize: const Size(48, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            )
+          : null,
+      child: Row(
+        mainAxisSize: androidStyle ? MainAxisSize.min : MainAxisSize.max,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (busy) ...[
+            SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: androidStyle ? AndroidReadingCover.ink : Colors.white,
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Flexible(
+            child: Text(
+              busy
+                  ? '正在打开…'
+                  : live
+                  ? (running
+                        ? (Platform.isIOS ? '查看随屏阅读' : '停止随屏阅读')
+                        : '开启随屏阅读')
+                  : '选择截图',
+              textAlign: TextAlign.center,
+            ),
+          ),
+          if (!busy) ...[
+            const SizedBox(width: 10),
+            Icon(
+              androidStyle && running
+                  ? Icons.stop_rounded
+                  : CupertinoIcons.arrow_right,
+              size: 17,
+            ),
+          ],
+        ],
+      ),
+    );
+    if (androidStyle) {
+      return AndroidReadingCover(
+        title: title,
+        description: description,
+        running: running,
+        action: action,
+        preferences: _ReadingContextBar(
+          controller: widget.controller,
+          embedded: true,
+        ),
+      );
+    }
     return _Surface(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Text(
-                  live ? '随屏阅读' : '截图阅读',
+                  title,
                   style: LingferType.heading.copyWith(fontSize: 25),
                 ),
               ),
@@ -584,15 +712,7 @@ class _ReadingEntryState extends State<_ReadingEntry> {
           ),
           const SizedBox(height: 10),
           Text(
-            widget.controller.preferences.mode == ReadingMode.translation
-                ? (widget.android
-                      ? '页面变化后自动准备译文，从悬浮菜单查看原文对照。'
-                      : '开启系统读屏后自动翻译，画中画预览部分译文。')
-                : widget.android
-                ? '回到正在读的页面，自动标注原词释义。'
-                : Platform.isIOS
-                ? '开启系统读屏后自动识别，画中画查看当前词义。'
-                : '在原词旁看释义，点按理解原句。',
+            description,
             style: const TextStyle(
               fontSize: 14,
               height: 1.65,
@@ -600,45 +720,7 @@ class _ReadingEntryState extends State<_ReadingEntry> {
             ),
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              key: const ValueKey('primary-reading-action'),
-              onPressed: busy || widget.controller.loading ? null : _activate,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (busy) ...[
-                    const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                  ],
-                  Flexible(
-                    child: Text(
-                      busy
-                          ? '正在打开…'
-                          : live
-                          ? (running
-                                ? (Platform.isIOS ? '查看随屏阅读' : '停止随屏阅读')
-                                : '开启随屏阅读')
-                          : '选择截图',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  if (!busy) ...[
-                    const SizedBox(width: 10),
-                    const Icon(CupertinoIcons.arrow_right, size: 17),
-                  ],
-                ],
-              ),
-            ),
-          ),
+          SizedBox(width: double.infinity, child: action),
         ],
       ),
     );
@@ -653,6 +735,7 @@ class _Shortcuts extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       if (constraints.maxWidth < 1) return const SizedBox.shrink();
+      final androidStyle = Theme.of(context).platform == TargetPlatform.android;
       final actions = [
         if (android || Platform.isIOS)
           (
@@ -676,102 +759,122 @@ class _Shortcuts extends StatelessWidget {
           () => _importFile(context, controller),
         ),
       ];
-      final single =
-          constraints.maxWidth < 260 &&
-          MediaQuery.textScalerOf(context).scale(14) > 20;
+      // Each four-character label shares its tile with a 32dp icon and padding.
+      final entryWidth =
+          32 + 10 + 10 + 4 * MediaQuery.textScalerOf(context).scale(14);
+      final single = androidStyle
+          ? constraints.maxWidth < 24 + 8 + 2 * entryWidth
+          : constraints.maxWidth < 260 &&
+                MediaQuery.textScalerOf(context).scale(14) > 20;
       final columns = single ? 1 : 2;
       final width = (constraints.maxWidth - 24 - 8 * (columns - 1)) / columns;
-      return LingferGlassSurface(
-        radius: 24,
-        shadow: false,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final action in actions)
-                    SizedBox(
-                      key: ValueKey('entry-${action.$2}'),
-                      width: width,
-                      child: TextButton(
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 56),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 13,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          backgroundColor: Colors.white.withValues(alpha: .68),
-                          foregroundColor: LingferColors.ink,
+      final content = Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final action in actions)
+                  SizedBox(
+                    key: ValueKey('entry-${action.$2}'),
+                    width: width,
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 56),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: androidStyle ? 5 : 12,
+                          vertical: androidStyle ? 10 : 13,
                         ),
-                        onPressed: controller.loading ? null : action.$3,
-                        child: Row(
-                          children: [
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        backgroundColor: androidStyle
+                            ? Colors.transparent
+                            : Colors.white.withValues(alpha: .68),
+                        foregroundColor: LingferColors.ink,
+                      ),
+                      onPressed: controller.loading ? null : action.$3,
+                      child: Row(
+                        children: [
+                          if (androidStyle)
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEEF2EF),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                action.$1,
+                                size: 18,
+                                color: LingferColors.accent,
+                              ),
+                            )
+                          else
                             Icon(
                               action.$1,
                               size: 19,
                               color: LingferColors.accent,
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                action.$2,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              action.$2,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
+                  ),
+              ],
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 10, bottom: 2),
+              child: Divider(height: 1, indent: 8, endIndent: 8),
+            ),
+            TextButton(
+              onPressed: () => _showPlatformGuide(context, android),
+              style: TextButton.styleFrom(
+                foregroundColor: LingferColors.muted,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    android
+                        ? CupertinoIcons.question_circle
+                        : CupertinoIcons.square_arrow_up,
+                    size: 17,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      android ? '随屏阅读使用方法' : '从 Safari 分享阅读',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  const Icon(CupertinoIcons.chevron_right, size: 11),
                 ],
               ),
-              const Padding(
-                padding: EdgeInsets.only(top: 10, bottom: 2),
-                child: Divider(height: 1, indent: 8, endIndent: 8),
-              ),
-              TextButton(
-                onPressed: () => _showPlatformGuide(context, android),
-                style: TextButton.styleFrom(
-                  foregroundColor: LingferColors.muted,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      android
-                          ? CupertinoIcons.question_circle
-                          : CupertinoIcons.square_arrow_up,
-                      size: 17,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        android ? '随屏阅读使用方法' : '从 Safari 分享阅读',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ),
-                    const Icon(CupertinoIcons.chevron_right, size: 11),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
+      return androidStyle
+          ? _Surface(padding: EdgeInsets.zero, child: content)
+          : LingferGlassSurface(radius: 24, shadow: false, child: content);
     },
   );
 }
@@ -861,51 +964,56 @@ class _LocalBookRow extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: const EdgeInsets.fromLTRB(18, 12, 8, 12),
-    horizontalTitleGap: 14,
-    leading: Container(
-      width: 48,
-      height: 52,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: LingferColors.tint,
-        borderRadius: BorderRadius.circular(13),
+  Widget build(BuildContext context) {
+    final android = Theme.of(context).platform == TargetPlatform.android;
+    return ListTile(
+      contentPadding: const EdgeInsets.fromLTRB(18, 12, 8, 12),
+      horizontalTitleGap: 14,
+      leading: android
+          ? _AndroidFileMark(format: _format)
+          : Container(
+              width: 48,
+              height: 52,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: LingferColors.tint,
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Text(
+                _format,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: .4,
+                  color: LingferColors.accent,
+                ),
+              ),
+            ),
+      title: Text(
+        book.displayTitle,
+        maxLines: android ? null : 2,
+        overflow: android ? TextOverflow.visible : TextOverflow.ellipsis,
+        style: LingferType.heading.copyWith(fontSize: 17, height: 1.4),
       ),
-      child: Text(
-        _format,
-        style: const TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          letterSpacing: .4,
-          color: LingferColors.accent,
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 5),
+        child: Text(
+          '${book.isPinned ? '置顶 · ' : ''}${book.defaultLevel.label} · ${book.subtitle}',
+          style: const TextStyle(fontSize: 12, color: LingferColors.muted),
         ),
       ),
-    ),
-    title: Text(
-      book.displayTitle,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: LingferType.heading.copyWith(fontSize: 17, height: 1.4),
-    ),
-    subtitle: Padding(
-      padding: const EdgeInsets.only(top: 5),
-      child: Text(
-        '${book.isPinned ? '置顶 · ' : ''}${book.defaultLevel.label} · ${book.subtitle}',
-        style: const TextStyle(fontSize: 12, color: LingferColors.muted),
+      trailing: IconButton(
+        tooltip: '资料操作',
+        onPressed: () => _showActions(context),
+        icon: Icon(
+          android ? Icons.more_vert_rounded : CupertinoIcons.ellipsis,
+          size: 22,
+          color: LingferColors.muted,
+        ),
       ),
-    ),
-    trailing: IconButton(
-      tooltip: '资料操作',
-      onPressed: () => _showActions(context),
-      icon: const Icon(
-        CupertinoIcons.ellipsis,
-        size: 22,
-        color: LingferColors.muted,
-      ),
-    ),
-    onTap: () => _openBook(context, book),
-  );
+      onTap: () => _openBook(context, book),
+    );
+  }
 }
 
 class _SavedWords extends StatelessWidget {
@@ -1337,24 +1445,15 @@ Future<void> _startScreenReading(
   final prefs = await SharedPreferences.getInstance();
   if (!context.mounted) return;
   if (prefs.getBool('screen_disclosure_v2') != true) {
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('开启随屏阅读'),
-        content: const Text(
-          '开启后，语渡会在页面变化并停稳时自动识别文字，将译义标在原词附近。点悬浮按钮打开阅读菜单，长按可停止。\n\n英语→中文的基础释义在本机完成；其他翻译方向以及语境详解会将对应文字发送给 AI 服务。屏幕图片不上传，也不会自动存入相册。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('暂不开启'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('了解，继续'),
-          ),
-        ],
-      ),
+    final accepted = await _showAndroidReadingNotice(
+      context,
+      title: '开启随屏阅读',
+      paragraphs: const [
+        '选择阅读的 App 后，语渡会在本机识别当前页面。学习辅助把释义标在原词旁。整页对照在页面停稳后预译可见段落，轻点段落旁的页边即可展开译文。',
+        '英译中的基础词义可离线查看。段落翻译、整页翻译和语境讲解等功能需要另行允许联网 AI，才会发送对应文字。屏幕图片不会上传或自动存入相册。',
+      ],
+      accept: '了解，继续',
+      cancel: '暂不开启',
     );
     if (accepted != true) return;
     await prefs.setBool('screen_disclosure_v2', true);
@@ -1362,22 +1461,15 @@ Future<void> _startScreenReading(
   await controller.refreshScreenStatus();
   if (!context.mounted) return;
   if (!controller.overlayAllowed) {
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('允许显示悬浮按钮'),
-        content: const Text('需要你在系统设置中允许语渡显示在其他应用上层。授权后回到这里，再点“开启随屏阅读”。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('前往设置'),
-          ),
-        ],
-      ),
+    final accepted = await _showAndroidReadingNotice(
+      context,
+      title: '允许显示悬浮按钮',
+      paragraphs: const [
+        '在系统设置中，允许语渡显示在其他应用上层。这样在浏览器或阅读器里，释义就能出现在原词旁。',
+        '授权后回到语渡，再点一次「开启随屏阅读」。',
+      ],
+      accept: '前往设置',
+      cancel: '取消',
     );
     if (accepted == true) await controller.bridge.requestOverlayPermission();
     return;

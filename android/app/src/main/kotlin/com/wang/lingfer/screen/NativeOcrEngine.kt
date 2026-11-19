@@ -1,6 +1,9 @@
 package com.wang.lingfer.screen
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.RectF
 import com.google.mlkit.nl.languageid.LanguageIdentification
 import com.google.mlkit.vision.common.InputImage
@@ -45,6 +48,18 @@ class NativeOcrEngine {
         }.addOnFailureListener { if (!closed) callback(null, it) }
     }
     companion object {
+        // Mask pixels before ML Kit groups them into words or identifies a script.
+        // Post-recognition box tests alone cannot split mixed document/overlay words.
+        internal fun maskOverlayPixels(frame: Bitmap, excluded: List<RectF>): Bitmap {
+            if (excluded.isEmpty()) return frame
+            val result = if (frame.isMutable) frame else frame.copy(Bitmap.Config.ARGB_8888, true)
+            val canvas = Canvas(result)
+            val paper = Paint().apply { color = Color.WHITE }
+            for (box in excluded) canvas.drawRect(box, paper)
+            return result
+        }
+
+
         // Browser chrome can contain a short Chinese tooltip over a long Latin
         // article. Remove minority-script letters only from the language sample,
         // never from OCR text, positions or the actual translation request.

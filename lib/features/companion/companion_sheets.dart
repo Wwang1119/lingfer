@@ -1,5 +1,58 @@
 part of 'companion_shell.dart';
 
+Future<bool?> _showAndroidReadingNotice(
+  BuildContext context, {
+  required String title,
+  required List<String> paragraphs,
+  required String accept,
+  required String cancel,
+}) => showModalBottomSheet<bool>(
+  context: context,
+  useSafeArea: true,
+  isScrollControlled: true,
+  constraints: const BoxConstraints(maxWidth: 560),
+  backgroundColor: Colors.transparent,
+  builder: (sheetContext) => _GlassSheet(
+    child: SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SheetHeader(title: title, showClose: false),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 16, 22, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final paragraph in paragraphs)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: Text(
+                        paragraph,
+                        style: const TextStyle(fontSize: 15, height: 1.65),
+                      ),
+                    ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(sheetContext, true),
+                    child: Text(accept),
+                  ),
+                  const SizedBox(height: 4),
+                  TextButton(
+                    onPressed: () => Navigator.pop(sheetContext, false),
+                    child: Text(cancel),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  ),
+);
+
 void _openText(
   BuildContext context,
   CompanionController controller,
@@ -244,10 +297,10 @@ class _TextInputSheetState extends State<_TextInputSheet> {
 void _showPlatformGuide(BuildContext context, bool android) {
   final steps = android
       ? [
-          ('开启会话', '在语渡点“开启随屏阅读”，完成悬浮窗和屏幕捕获授权。跨 App 阅读时请选择“整个屏幕”。'),
-          ('回到正在看的页面', '切换到想读的 App，页面停稳后自动识别；翻页或滚动后会更新。关闭自动更新时，在“渡”的菜单选择重新识别。'),
-          ('在原词旁看译义', '空白处显示玻璃译义框；密集正文保留原词标记。点译义框或标记可看详解。'),
-          ('阅读菜单', '点“渡”调整范围、语言、查看本页全部词卡或暂停。点面板外侧收起，长按“渡”或从通知栏停止。'),
+          ('选择阅读的 App', '点「开启随屏阅读」，按系统提示授权。如果系统提供「单个应用」，可以只选择正在读的 App。'),
+          ('学习辅助', '原词下方的细线标出可以点的词。点原词或短释义看词卡，也可以在词卡里点「翻译这段」。'),
+          ('整页对照', '开启联网 AI 后，停稳的页面会提前翻译。轻点段落旁的页边展开译文。滑动正文翻页，滑动译文可继续读长段。点另一段的页边即可换段。'),
+          ('结束阅读', '长按书本按钮即可停止读屏。'),
         ]
       : [
           ('开启实时读屏', 'iOS 27 或以上，在语渡点“开启随屏阅读”，再在系统面板选择“共享整个屏幕”。'),

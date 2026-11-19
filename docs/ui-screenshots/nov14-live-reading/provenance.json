@@ -1,0 +1,135 @@
+{
+  "date": "2026-11-14",
+  "source": "iPhone 物理设备 XCTest 附件，使用 xcrun xcresulttool export attachments 官方公开命令按测试和命名 PNG 筛选。",
+  "candidate": "2.1.1+13 本机安装验证候选，未上传。FullPage源文/浮窗/历史来自状态簇过滤后的device-final；系统导航来自先前四项全过的device-stable。",
+  "privacy": "仅导出三项公开 fixture 用例的命名 PNG；未导出用户恢复用例、额外系统截图、UI hierarchy、设备唯一标识或真实公众号/书架。",
+  "pixelEdits": "无。按原图逐字节复制，仅重命名。",
+  "screenshots": [
+    {
+      "file": "nov14-visible-source-fixture.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-final.xcresult",
+      "testIdentifier": "ReadingUITests/testFullPageCaptureAndLocalSessionHistory()",
+      "originalAttachmentName": "nov14-unbranded-learning-float_0_7948524D-DF65-406A-B469-ACFC4E86D901.png",
+      "capturedAtUTC": "2026-11-14T10:13:51.176+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:13:51.176+08:00",
+      "fixture": "test/fixtures/full-page-reading.html",
+      "sha256": "790f647f805e670072e4f07f7a042a427a82f3ed3de667f15cd058b865f69b4c",
+      "note": "外部公开样例正文；此帧未出现 PiP，不用作浮窗已打开的证明。"
+    },
+    {
+      "file": "nov14-complete-first-page-source.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-final.xcresult",
+      "testIdentifier": "ReadingUITests/testFullPageCaptureAndLocalSessionHistory()",
+      "originalAttachmentName": "nov14-complete-first-page-source_0_866B1DE4-B82E-4980-9EBF-D69D51948EF1.png",
+      "capturedAtUTC": "2026-11-14T10:13:54.622+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:13:54.622+08:00",
+      "fixture": "test/fixtures/full-page-reading.html",
+      "sha256": "76fa7680c9aba6725c5bc5be96bfe0e3f682fea4e4be14879944744cca9e510e",
+      "note": "最终增量首屏已识别346字/8词；55+已排除，仍有1X1à状态簇OCR残留，规则不是完美正文分类。"
+    },
+    {
+      "file": "nov14-next-page-learning-float.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-final.xcresult",
+      "testIdentifier": "ReadingUITests/testFullPageCaptureAndLocalSessionHistory()",
+      "originalAttachmentName": "nov14-next-page-learning-float_0_ABCAF5E4-5C74-4778-B3F8-8A27E039F6F8.png",
+      "capturedAtUTC": "2026-11-14T10:14:01.456+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:14:01.456+08:00",
+      "fixture": "test/fixtures/full-page-reading.html",
+      "sha256": "b9d0aaf2bb31138f66c7ddffbb1f5a8ac2c50c02b6c95bd362a567c721615b5b",
+      "note": "最终增量第二页实际PiP词卡与高亮，系统控制层已展开。"
+    },
+    {
+      "file": "nov14-local-session-history-source.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-final.xcresult",
+      "testIdentifier": "ReadingUITests/testFullPageCaptureAndLocalSessionHistory()",
+      "originalAttachmentName": "nov14-local-session-history-source_0_BF0CD389-9847-4B27-BB3D-B9B8A7CAF963.png",
+      "capturedAtUTC": "2026-11-14T10:14:07.960+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:14:07.960+08:00",
+      "fixture": "test/fixtures/full-page-reading.html",
+      "sha256": "59077c3b102a26ee45093de801810a2b78dbdcd0855a494889ecb6c8648aca18",
+      "note": "最终增量停止后本地累计原文698字/2个页面记录；仍保留1X1à OCR杂项。"
+    },
+    {
+      "file": "nov14-local-session-history-words.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-final.xcresult",
+      "testIdentifier": "ReadingUITests/testFullPageCaptureAndLocalSessionHistory()",
+      "originalAttachmentName": "nov14-local-session-history-words_0_06C87401-5786-45C5-82BF-5EF1B717CBD3.png",
+      "capturedAtUTC": "2026-11-14T10:14:08.573+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:14:08.573+08:00",
+      "fixture": "test/fixtures/full-page-reading.html",
+      "sha256": "6c1275235793157a1f30f670385dc421f90f632791c24d88e31994127e4433a3",
+      "note": "最终增量停止后本地累计14个匹配词，非自动收藏。"
+    },
+    {
+      "file": "nov14-paired-before-skip.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-stable.xcresult",
+      "testIdentifier": "ReadingUITests/testPiPSystemPassageNavigation()",
+      "originalAttachmentName": "pip-passages-controls-0_0_6BA1D36B-D618-4D2D-8B45-F37A8098AD0A.png",
+      "capturedAtUTC": "2026-11-14T10:01:41.441+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:01:41.441+08:00",
+      "fixture": "test/fixtures/island-chinese.html",
+      "sha256": "dd97919c478cfc146a1c95258b5a5dcf70aafaec0f0bec151e2e7ebc70f4c332",
+      "note": "实际系统前后按钮，句组 3/7；控制层覆盖部分正文。"
+    },
+    {
+      "file": "nov14-paired-after-two-forward.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-stable.xcresult",
+      "testIdentifier": "ReadingUITests/testPiPSystemPassageNavigation()",
+      "originalAttachmentName": "pip-passages-after-skip-1_0_C6FD5395-1848-44CC-B5C6-581FAF15BE7C.png",
+      "capturedAtUTC": "2026-11-14T10:01:47.625+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:01:47.625+08:00",
+      "fixture": "test/fixtures/island-chinese.html",
+      "sha256": "0025bda5b3a0c66ac4cd22cc59adf22ff507ab7c54a45aa4a9a5043379e75210",
+      "note": "两次前进后的句组 5/7，原译属于同一组。"
+    },
+    {
+      "file": "nov14-paired-after-back.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-stable.xcresult",
+      "testIdentifier": "ReadingUITests/testPiPSystemPassageNavigation()",
+      "originalAttachmentName": "pip-passages-after-skip-2_0_DCA09709-CD5F-4C59-9B3E-3FAEA76B13DD.png",
+      "capturedAtUTC": "2026-11-14T10:01:52.104+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:01:52.104+08:00",
+      "fixture": "test/fixtures/island-chinese.html",
+      "sha256": "8c195317e8ef9b122814fd9f951e2f4fc2ef82292852aa69666247831f56aa3c",
+      "note": "一次后退后的句组 4/7；文章持续处于前台。"
+    },
+    {
+      "file": "nov14-word-before-skip.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-stable.xcresult",
+      "testIdentifier": "ReadingUITests/testPiPSystemWordNavigation()",
+      "originalAttachmentName": "pip-words-controls-0_0_4B178628-5E56-43E2-9FBE-C9B306615154.png",
+      "capturedAtUTC": "2026-11-14T10:02:53.619+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:02:53.619+08:00",
+      "fixture": "test/fixtures/stable-scroll.html",
+      "sha256": "45c259cf4dcdafc6eb4e418f28243d373f2c0d4d23de9097398d6e7ada131673",
+      "note": "系统词卡导航前：occasional，4/9，高亮目标词。"
+    },
+    {
+      "file": "nov14-word-after-back.png",
+      "sourceBundle": "/private/tmp/lingfer-toolchain/reading-nov14-device-stable.xcresult",
+      "testIdentifier": "ReadingUITests/testPiPSystemWordNavigation()",
+      "originalAttachmentName": "pip-words-after-skip-2_0_37865B93-DBEC-467D-A39F-84F99AB87DDC.png",
+      "capturedAtUTC": "2026-11-14T10:03:04.395+00:00",
+      "capturedAtAsiaMacau": "2026-11-14T18:03:04.395+08:00",
+      "fixture": "test/fixtures/stable-scroll.html",
+      "sha256": "0c2677390ee6541079302d3a0d3e1b16dc4b2025b6b07607a09c0606551a33be",
+      "note": "前进、前进、后退后的 original，5/9，高亮目标词。"
+    }
+  ],
+  "verification": {
+    "deviceStable": {
+      "FullPage": 66.56,
+      "PiPPassage": 84.667,
+      "PiPWord": 72.151,
+      "RestoreUser": 4.886,
+      "result": "4 passed"
+    },
+    "deviceFinal": {
+      "FullPage": 62.839,
+      "RestoreUser": 5.219,
+      "result": "2 passed",
+      "finishedAtAsiaMacau": "2026-11-14T18:14:15+08:00"
+    },
+    "remainingIssue": "最终源文仍有短小1X1à状态栏OCR残留，未宣称完美正文分类。"
+  }
+}

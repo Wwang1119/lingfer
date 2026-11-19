@@ -1,0 +1,122 @@
+{
+  "date": "2026-11-14",
+  "platform": "iOS Simulator 27.2",
+  "device": "iPhone 18 Pro / Lingfer First Launch Nov14",
+  "deviceUDID": "DE3F7E7D-5530-4A21-93B8-C8CD7BFB4C96",
+  "installation": "Removed only this dedicated simulator app before final test; no user device or previous simulator was cleared.",
+  "test": "ReadingUITests/testFirstLaunchLibraryAndReaderNov14()",
+  "resultBundle": "/private/tmp/lingfer-toolchain/reading-nov14-first-launch-badge-final.xcresult",
+  "result": "Passed",
+  "passedTests": 1,
+  "failedTests": 0,
+  "caseDurationSeconds": 91.358,
+  "screenshots": [
+    {
+      "file": "nov14-public-domain-prose.png",
+      "sourceAttachment": "2DB9BF30-11E2-4EBE-A63D-B66A3EF5A135.png",
+      "sourceSuggestedName": "nov14-public-domain-prose_0_394225E7-163A-4D63-875F-16FA255BFDA4.png",
+      "timestamp": 1794651705.409,
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "859fc16cd96ad71f02683d7f2afcee8780a6f686ee2223650b4a0a380407c14c",
+      "source": "XCUIScreen.main.screenshot() / XCResult original PNG",
+      "modified": false
+    },
+    {
+      "file": "nov14-reader-level-sheet.png",
+      "sourceAttachment": "5E4A06CE-1CC6-47F1-AB74-BC96A3AE7385.png",
+      "sourceSuggestedName": "nov14-reader-level-sheet_0_BDCABA9E-4687-4ED5-A7FA-49C12F1A07B5.png",
+      "timestamp": 1794651680.36,
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "888089dc1f65bc8f543a6c1e91dc71f31de9232e0b2229ae2066b5175ff266f0",
+      "source": "XCUIScreen.main.screenshot() / XCResult original PNG",
+      "modified": false
+    },
+    {
+      "file": "nov14-public-domain-reader-controls.png",
+      "sourceAttachment": "61BA2D19-69D7-4215-B28A-F560A695F92F.png",
+      "sourceSuggestedName": "nov14-public-domain-reader-controls_0_091C792D-325C-43FD-93E0-63A736FB6366.png",
+      "timestamp": 1794651669.019,
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "d032d067fb26cf3e3a5e2e8f2c08da05ee93236bc61dee7806f8164a4884dea4",
+      "source": "XCUIScreen.main.screenshot() / XCResult original PNG",
+      "modified": false
+    },
+    {
+      "file": "nov14-public-domain-reader.png",
+      "sourceAttachment": "93DACAAC-C5B0-4EEF-8901-7042ADFEBECA.png",
+      "sourceSuggestedName": "nov14-public-domain-reader_0_9D399665-B252-4610-8687-313BB525A2A7.png",
+      "timestamp": 1794651664.376,
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "01dbe7ec22aea55113057a390e2517ec4dffcd49436458e7e4905ba01c4c4172",
+      "source": "XCUIScreen.main.screenshot() / XCResult original PNG",
+      "modified": false
+    },
+    {
+      "file": "nov14-fresh-install-public-domain-library.png",
+      "sourceAttachment": "89E28143-E122-452F-B9E8-B7142942194E.png",
+      "sourceSuggestedName": "nov14-fresh-install-public-domain-library_0_E5D58A98-5DAB-488D-88CF-92D2074FE948.png",
+      "timestamp": 1794651658.29,
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "3f2af4ac0b3e33995803f3fc789c2686ef64db87204b9fe2e06771125f008054",
+      "source": "XCUIScreen.main.screenshot() / XCResult original PNG",
+      "modified": false
+    },
+    {
+      "file": "nov14-fresh-install-home.png",
+      "sourceAttachment": "99F69F4B-FD25-4A7A-AEB3-4B45979A7335.png",
+      "sourceSuggestedName": "nov14-fresh-install-home_0_571A6D0B-C144-4F23-8D60-EF6DEC1F5265.png",
+      "timestamp": 1794651651.864,
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "sha256": "d1f189745ff8e8afb4c6cb809f9c500dd1206aca8dfb98792206ea9e18ec0d8e",
+      "source": "XCUIScreen.main.screenshot() / XCResult original PNG",
+      "modified": false
+    }
+  ],
+  "assets": [
+    {
+      "file": "assets/books/alice_in_wonderland.txt",
+      "sha256": "88befc3a178e1e35d944d96df2f951853db0d377e2850e2508a31d73155ddbdc",
+      "bundledBytesEqualSource": true
+    },
+    {
+      "file": "assets/books/sherlock_holmes_adventures.txt",
+      "sha256": "754a639be325e94ee53c8b4fde226bb2633596bc9593bbe7d77245e76fc15e3b",
+      "bundledBytesEqualSource": true
+    },
+    {
+      "file": "assets/books/pride_and_prejudice.txt",
+      "sha256": "cb46d9ecf533ac8aeeca23c069946873b09854de7ce473ec5df3a20132b727b1",
+      "bundledBytesEqualSource": true
+    }
+  ],
+  "verified": [
+    "First launch local documents shows zero items; no phone-wide file scan.",
+    "All three built-in public-domain book buttons are visible.",
+    "Alice opens, English-to-Chinese reader controls are visible, seven learning ranges are shown.",
+    "Alice Chapter I actual prose is visible with quiet blue glosses; test reports 501 characters and gloss visible true."
+  ],
+  "limits": [
+    "Only Alice was opened in this UI test; the other two titles were checked as present and all three full text asset files were checked byte-for-byte in the app bundle.",
+    "Does not replace physical-device overlay or reading gesture validation."
+  ],
+  "readerProductSHA256": "ab33e5360225e3dbc00d4c0f9b3b955cef686273f2b1b2560dac4ec1b2f6eecc",
+  "readerBadgeVisibilityFix": "The existing AI status badge is hidden while chrome, reader settings or selection glass is visible; task count and requests are unchanged."
+}

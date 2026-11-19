@@ -1,0 +1,11 @@
+{
+  "kind": "simulator-component-render-not-system-island-screenshot",
+  "sourceHashes": {
+    "ios/Shared/ReadingActivityAttributes.swift": "f24878b09512a451b03019d949509a3517dbdcc7416242d945146d23d4b7dc22",
+    "ios/Shared/ReadingActivityIntents.swift": "0cf75b890a965f58829fa9e2ca70719e832ae4cd59098ca50f957fd1959e3075",
+    "ios/LingferActivity/ReadingActivityWidget.swift": "733b3ff2ced8ca6f0475c71b477f4d61aeae7cd9f03bd3ff504558c2d061e2e2",
+    "scripts/check_activity_layout.swift": "c4ebafee7c49d162b2162092f35cec86fb8f7561fcd194a03486686172b1347c"
+  },
+  "variants": 8,
+  "maxContentHeight": 115
+}

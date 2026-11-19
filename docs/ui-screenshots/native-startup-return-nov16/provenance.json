@@ -1,0 +1,157 @@
+{
+  "date": "2026-11-16",
+  "candidate": "2.1.1(14)",
+  "resultBundle": "/private/tmp/lingfer-toolchain/return-glass-nov16.xcresult",
+  "log": "/private/tmp/lingfer-toolchain/return-glass-nov16.log",
+  "sourceManifest": "/private/tmp/lingfer-toolchain/return-glass-nov16-attachments/manifest.json",
+  "platform": "iOS Simulator",
+  "passedTests": 2,
+  "failedTests": 0,
+  "testRuns": [
+    {
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "durationSeconds": 57.76,
+      "result": "Passed"
+    },
+    {
+      "test": "ReadingUITests/testReadingPreparationReturnAndOptionalConsent()",
+      "durationSeconds": 27.693,
+      "result": "Passed"
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "store-ios-current-home.png",
+      "sourceAttachment": "055A1827-2B34-47B6-BDED-B68C6AE2402F.png",
+      "sourceSuggestedName": "store-ios-current-home_0_1D375A7F-E4C3-4FEF-810D-F8301B885356.png",
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "result": "Passed",
+      "caseDurationSeconds": 57.76,
+      "capturedAt": "2026-11-16T20:48:56.535000+08:00",
+      "timestamp": 1794833336.535,
+      "deviceId": "20638840-1685-4AD5-91EC-647FC0C2D35F",
+      "deviceName": "Lingfer-Return-Glass-Nov16",
+      "platform": "iOS Simulator",
+      "width": 1206,
+      "height": 2622,
+      "bitDepth": 8,
+      "pngColorType": 2,
+      "sha256": "972dad43f9c1a5febe0bb767f1fb1dfbeb0eb5769735472ea4023827bf66d6af",
+      "modified": false,
+      "source": "Original XCUIScreen.main.screenshot() PNG exported from XCResult"
+    },
+    {
+      "file": "store-ios-live-ready-learning.png",
+      "sourceAttachment": "869E4C15-3EEB-4048-B5DA-BD62108A0CC0.png",
+      "sourceSuggestedName": "store-ios-live-ready-learning_0_82466DCE-DC83-4EDA-A1DE-61B0A8791E17.png",
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "result": "Passed",
+      "caseDurationSeconds": 57.76,
+      "capturedAt": "2026-11-16T20:48:52.659000+08:00",
+      "timestamp": 1794833332.659,
+      "deviceId": "20638840-1685-4AD5-91EC-647FC0C2D35F",
+      "deviceName": "Lingfer-Return-Glass-Nov16",
+      "platform": "iOS Simulator",
+      "width": 1206,
+      "height": 2622,
+      "bitDepth": 8,
+      "pngColorType": 2,
+      "sha256": "2a2c5fd5f05313c3ea0d7ae349565d2070c582c36fea192ba127d222e70a794a",
+      "modified": false,
+      "source": "Original XCUIScreen.main.screenshot() PNG exported from XCResult"
+    },
+    {
+      "file": "store-ios-live-ready-independent-controls.png",
+      "sourceAttachment": "BEDBFD78-D13C-47CE-A911-982D4216DC49.png",
+      "sourceSuggestedName": "store-ios-live-ready-independent-controls_0_644E473F-239D-462C-A775-0FC3A9C427A6.png",
+      "test": "ReadingUITests/testIndependentReadingSetupControls()",
+      "result": "Passed",
+      "caseDurationSeconds": 57.76,
+      "capturedAt": "2026-11-16T20:48:49.492000+08:00",
+      "timestamp": 1794833329.492,
+      "deviceId": "20638840-1685-4AD5-91EC-647FC0C2D35F",
+      "deviceName": "Lingfer-Return-Glass-Nov16",
+      "platform": "iOS Simulator",
+      "width": 1206,
+      "height": 2622,
+      "bitDepth": 8,
+      "pngColorType": 2,
+      "sha256": "387753c90e36c097cb20f4ef9030e0cb208d3b6c7871def235881ecbb842206f",
+      "modified": false,
+      "source": "Original XCUIScreen.main.screenshot() PNG exported from XCResult"
+    },
+    {
+      "file": "nov16-reading-preparation-single-return.png",
+      "sourceAttachment": "AF507708-2E7D-4F24-8534-4051ED1E3344.png",
+      "sourceSuggestedName": "nov16-reading-preparation-single-return_0_44389389-1C22-4229-9127-15519FF4E62C.png",
+      "test": "ReadingUITests/testReadingPreparationReturnAndOptionalConsent()",
+      "result": "Passed",
+      "caseDurationSeconds": 27.693,
+      "capturedAt": "2026-11-16T20:49:20.227000+08:00",
+      "timestamp": 1794833360.227,
+      "deviceId": "20638840-1685-4AD5-91EC-647FC0C2D35F",
+      "deviceName": "Lingfer-Return-Glass-Nov16",
+      "platform": "iOS Simulator",
+      "width": 1206,
+      "height": 2622,
+      "bitDepth": 8,
+      "pngColorType": 2,
+      "sha256": "d3de14973a9ce0b6ee61aee57dfaea7c294dadc9e42cb59a18332e40b7cff724",
+      "modified": false,
+      "source": "Original XCUIScreen.main.screenshot() PNG exported from XCResult"
+    }
+  ],
+  "visualReview": {
+    "reviewedOriginals": 4,
+    "singleReturnGlassConfirmed": true,
+    "singleReturnImage": "nov16-reading-preparation-single-return.png",
+    "newRetainedPanelPreparationCopyVisible": true,
+    "localOnlyAIStateVisible": true,
+    "noPiPClaim": true
+  },
+  "limits": [
+    "These screenshots are from an isolated iOS Simulator, not a physical iPhone.",
+    "The UI cases do not authorize system screen sharing, start actual capture or verify first PiP / Dynamic Island.",
+    "The latest ShareVC onAppear removal of automatic AI-sheet presentation has a successful physical test build; actual post-authorization physical-device behavior remains unverified and was deferred at the user's request.",
+    "44pt physical hit-target geometry is not measured by these screenshots.",
+    "TestFlight 2.1.1(14) is uploaded, processed and available to the original two-person internal group. Availability does not close the prior first-PiP and passage-navigation failures or replace latest physical regression.",
+    "This documentation update does not claim that the six store posters have been uploaded or that an App Store review/release has been submitted."
+  ],
+  "release": {
+    "version": "2.1.1",
+    "build": "14",
+    "uploaded": true,
+    "processingComplete": true,
+    "internalGroup": "王业翔内部测试",
+    "testers": 2,
+    "status": "正在测试",
+    "available": true,
+    "testNotesSavedAndReloadedExactMatch": true,
+    "physicalRegression": "deferred_at_user_request",
+    "userAuthorization": "目前连不上，你直接推送吧，下次再做真机测试",
+    "archivePath": "build/ios/archive/Runner-2.1.1-14-nov16.xcarchive",
+    "archivePassed": true,
+    "strictCodeSignatureVerification": "codesign --verify --deep --strict: exit 0, confirmed by root",
+    "evidence": {
+      "upload": "../../../artifacts/testflight-2.1.1-14/xcode-uploaded.png",
+      "internalAvailability": "../../../artifacts/testflight-2.1.1-14/available-internal-group.png",
+      "status": "../../../artifacts/testflight-2.1.1-14/status.json",
+      "sourceAndArchive": "../../../artifacts/testflight-2.1.1-14/source-manifest.json",
+      "testNotes": "../../../artifacts/testflight-2.1.1-14/what-to-test-zh-Hans.txt"
+    },
+    "appStoreReviewSubmitted": false
+  },
+  "storePosterSources": {
+    "01": {
+      "source": "store-ios-current-home.png",
+      "approval": "approved by root",
+      "headline": "随屏与资料，从这里开始",
+      "waitingForPiP": false
+    },
+    "02": {
+      "source": "store-ios-live-ready-independent-controls.png",
+      "status": "latest correct independent preparation page"
+    },
+    "production": "Six posters are being prepared by the main task; this record does not claim their App Store upload."
+  }
+}

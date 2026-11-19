@@ -290,6 +290,51 @@ void main() {
   );
 
   testWidgets(
+    'Android shelf switches from three covers to a list for large text',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      SharedPreferences.setMockInitialValues({});
+      await tester.runAsync(VocabularyEngine.load);
+      await tester.pumpWidget(const LingferRoot());
+      await tester.pumpAndSettle();
+
+      final shelf = find.text('内置公版书');
+      final scrollable = find
+          .descendant(
+            of: find.byKey(const ValueKey('reading-home-scroll')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(shelf, 220, scrollable: scrollable);
+      List<Rect> tiles() => [
+        for (final entry in AssetBooksService.publicDomainCatalog)
+          tester.getRect(
+            find.byKey(ValueKey('bundled-book-${entry.assetPath}')),
+          ),
+      ];
+      final covers = tiles();
+      expect(covers.map((rect) => rect.top).toSet(), hasLength(1));
+      expect(covers[0].right, lessThan(covers[1].left));
+      expect(covers[1].right, lessThan(covers[2].left));
+
+      tester.view.physicalSize = const Size(320, 844);
+      tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(shelf, 220, scrollable: scrollable);
+      final rows = tiles();
+      expect(rows.map((rect) => rect.left).toSet(), hasLength(1));
+      expect(rows[0].bottom, lessThan(rows[1].top));
+      expect(rows[1].bottom, lessThan(rows[2].top));
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     'A missing local file keeps its record and offers explicit recovery',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);

@@ -5,6 +5,8 @@ import 'reading_preferences.dart';
 import 'lingfer_theme.dart';
 import 'lingfer_glass.dart';
 
+part 'android_reading_preferences_sheet.dart';
+
 class ReadingLanguageControl extends StatelessWidget {
   const ReadingLanguageControl({
     super.key,
@@ -55,6 +57,27 @@ class ReadingLanguageControl extends StatelessWidget {
 }
 
 Future<void> showReadingPreferences(
+  BuildContext context,
+  CompanionController controller,
+) {
+  if (Theme.of(context).platform == TargetPlatform.android) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: 552),
+      backgroundColor: const Color(0xFFFAF9F5),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      builder: (_) => _AndroidReadingPreferencesSheet(controller: controller),
+    );
+  }
+  return _showDefaultReadingPreferences(context, controller);
+}
+
+Future<void> _showDefaultReadingPreferences(
   BuildContext context,
   CompanionController controller,
 ) => showModalBottomSheet<void>(
