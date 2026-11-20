@@ -92,7 +92,7 @@ internal fun verifyParagraphAnnotations(context: Context) {
     gesture(first, MotionEvent.ACTION_DOWN, 8f, 200)
     gesture(first, MotionEvent.ACTION_UP, 10f, 260)
     check(texts(card()).contains("正在翻译此段…"))
-    check(annotations.regions.count { it.height() > px(40) } == 1) { "Only the open card should be a tall window" }
+    check(annotations.regions.count { it.height() > area.height() * .2f } == 1) { "Only the open card should be a tall window" }
     annotations.show(page, ready, false, null, area, emptyList())
     check("译文 a" in texts(card()))
     val firstCard = card()
@@ -175,4 +175,41 @@ internal fun verifyParagraphAnnotations(context: Context) {
     check("Left text. translated" in texts(card()) && "Right text. translated" !in texts(card()))
     annotations.clear()
     check(views.isEmpty() && annotations.regions.isEmpty() && !changing && regionChanges > 5)
+
+    val upper = OcrLine("p1", "Researchers maintain that consistent practice matters.", RectF(40f, 80f, 250f, 98f), 0, emptyList(), "p")
+    val lower = OcrLine("p2", "The second line stays in the same paragraph.", RectF(44f, 116f, 230f, 134f), 60, emptyList(), "p")
+    val neighbour = OcrLine("q1", "A neighbour must stay unmarked.", RectF(40f, 168f, 220f, 186f), 120, emptyList(), "q")
+    val article = OcrPage(listOf(upper, lower, neighbour), 320, 540)
+    annotations.show(article, article.paragraphs, false, null, area, emptyList())
+    target("Researchers maintain that consistent practice matters.").performClick()
+    val wash = views.keys.single { it.contentDescription == "原文范围" }
+    val washParams = views.getValue(wash)
+    check(washParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+    wash.layout(0, 0, washParams.width, washParams.height)
+    val painted = Bitmap.createBitmap(washParams.width, washParams.height, Bitmap.Config.ARGB_8888)
+    wash.draw(Canvas(painted))
+    val scaleX = area.width() / 320f
+    val scaleY = area.height() / 540f
+    fun sample(x: Float, y: Float) = painted.getPixel((x * scaleX).toInt(), (y * scaleY).toInt())
+    val onLine = sample(90f, 89f)
+    val between = sample(90f, 107f)
+    val other = sample(90f, 177f)
+    check(android.graphics.Color.alpha(onLine) in 8..48 && android.graphics.Color.red(onLine) > 180) {
+        "The source wash should be a light paper tint, not a solid plate"
+    }
+    check(android.graphics.Color.alpha(between) < 32 && android.graphics.Color.red(between) < 80) {
+        "Line washes joined into one rectangle"
+    }
+    check(android.graphics.Color.red(other) < 80) { "The wash covered the next paragraph" }
+    val bands = annotations.regions.filter { it.width() > 120 && it.height() < 90 }.sortedBy { it.top }
+    check(bands.size >= 2 && bands[0].bottom < bands[1].top)
+    val sheet = annotations.persistentRegion!!
+    val source = RectF(40f * scaleX, 80f * scaleY, 250f * scaleX, 134f * scaleY)
+    check(!RectF.intersects(sheet, source)) { "The sheet covered the paragraph it explains" }
+    check(sheet.width() <= area.width() * .5f)
+    painted.recycle()
+    annotations.hide()
+    check(views.keys.none { it.contentDescription == "原文范围" } && views.isNotEmpty())
+    annotations.clear()
+    check(views.isEmpty())
 }

@@ -20,6 +20,7 @@ fun main() {
     ImageIO.write(resting(dense = false), "png", File(out, "diagram-resting.png"))
     ImageIO.write(resting(dense = true), "png", File(out, "diagram-dense-resting.png"))
     ImageIO.write(asked(), "png", File(out, "diagram-asked.png"))
+    ImageIO.write(longParagraph(), "png", File(out, "diagram-long-paragraph.png"))
     println(out.absolutePath)
 }
 
@@ -64,36 +65,65 @@ private fun resting(dense: Boolean): BufferedImage {
     return image
 }
 
-private fun asked(): BufferedImage {
-    val (image, g) = base("After the reader asks: translation first, one sheet")
-    g.color = ink
-    g.font = Font("Serif", Font.PLAIN, 26)
-    listOf(
-        "Researchers maintain" to 180,
-        "that consistent" to 226,
-        "practice is more" to 272,
-        "effective." to 318,
-        "A familiar context" to 400,
-        "can reveal a subtle" to 446,
-        "distinction." to 492,
-    ).forEach { (line, y) -> g.drawString(line, 72, y) }
+/** Bands are a little stronger than the device tint so the per-line shape can be seen. */
+private fun wash(g: Graphics2D, lines: List<Pair<Int, Int>>) {
+    g.color = Color(236, 226, 206)
+    lines.forEach { (top, width) -> g.fillRect(76, top, width, 36) }
+}
+
+private fun sheet(g: Graphics2D, left: Int, top: Int) {
     g.color = paper
-    g.fillRoundRect(430, 160, 390, 300, 22, 22)
+    g.fillRoundRect(left, top, 340, 280, 18, 18)
     g.color = Color(228, 226, 220)
     g.stroke = BasicStroke(1f)
-    g.drawRoundRect(430, 160, 390, 300, 22, 22)
+    g.drawRoundRect(left, top, 340, 280, 18, 18)
     g.color = ink
-    g.font = Font("Serif", Font.PLAIN, 22)
-    listOf(
-        "研究者认为，持续的练习" to 210,
-        "比偶尔的努力更有效。" to 248,
-        "熟悉的语境能让一个" to 286,
-        "生疏的说法变得好记。" to 324,
-    ).forEach { (line, y) -> g.drawString(line, 454, y) }
+    g.font = Font("Serif", Font.PLAIN, 20)
+    listOf("研究者认为，持续的练习", "比偶尔的努力更有效。", "熟悉的语境能让说法", "变得好记。").forEachIndexed { index, line ->
+        g.drawString(line, left + 22, top + 48 + index * 36)
+    }
     g.color = muted
-    g.font = Font("Serif", Font.PLAIN, 14)
-    g.drawString("Researchers maintain that…", 454, 420)
-    g.drawString("收起", 760, 420)
+    g.font = Font("Serif", Font.PLAIN, 13)
+    g.drawString("Researchers maintain…", left + 22, top + 230)
+    g.drawString("收起", left + 286, top + 230)
+}
+
+private fun asked(): BufferedImage {
+    val (image, g) = base("Asked: a paper wash on the source, sheet beside it")
+    val body = listOf(
+        "Researchers maintain" to 180,
+        "that consistent" to 228,
+        "practice is more" to 276,
+        "effective." to 324,
+        "A familiar context" to 408,
+        "can reveal a subtle" to 456,
+        "distinction." to 504,
+    )
+    wash(g, listOf(168 to 250, 216 to 210, 264 to 230, 312 to 140))
+    g.color = ink
+    g.font = Font("Serif", Font.PLAIN, 26)
+    body.forEach { (line, y) -> g.drawString(line, 80, y) }
+    sheet(g, 500, 168)
+    g.dispose()
+    return image
+}
+
+private fun longParagraph(): BufferedImage {
+    val (image, g) = base("Long paragraph: one wash band per line, not one block")
+    val lines = listOf(
+        "Researchers maintain that" to 160,
+        "consistent practice is" to 214,
+        "more effective than" to 268,
+        "occasional effort." to 322,
+    )
+    wash(g, lines.map { (_, y) -> (y - 28) to 400 })
+    g.color = ink
+    g.font = Font("Serif", Font.PLAIN, 26)
+    lines.forEach { (line, y) -> g.drawString(line, 80, y) }
+    g.color = ink
+    g.font = Font("Serif", Font.PLAIN, 26)
+    g.drawString("The next paragraph stays clear.", 80, 430)
+    sheet(g, 500, 160)
     g.dispose()
     return image
 }

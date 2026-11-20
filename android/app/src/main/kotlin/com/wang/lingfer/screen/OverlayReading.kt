@@ -102,6 +102,72 @@ internal fun firstLineHeights(tops: List<Float>, desired: Float, gap: Float, min
 /** The captured page went away, so the overlay must not stay on top of something else. */
 internal fun clearOverlayWhenCaptureHidden(captureVisible: Boolean) = !captureVisible
 
+/**
+ * One wash rectangle per line, padded only a little, so a paragraph is not one block
+ * that swallows the margin or the next paragraph.
+ */
+internal fun sourceWash(lines: List<ReadingBox>, padX: Float, padY: Float): List<ReadingBox> {
+    val sorted = lines.filter { !it.isEmpty }.sortedBy { it.top }
+    return sorted.mapIndexed { index, line ->
+        val above = sorted.getOrNull(index - 1)?.let { line.top - it.bottom } ?: padY * 4
+        val below = sorted.getOrNull(index + 1)?.let { it.top - line.bottom } ?: padY * 4
+        val up = min(padY, max(0f, above / 2f - 0.5f))
+        val down = min(padY, max(0f, below / 2f - 0.5f))
+        ReadingBox(line.left - padX, line.top - up, line.right + padX, line.bottom + down)
+    }
+}
+
+/**
+ * A sheet that does not cover the source. Width and height shrink to the open gap.
+ * Null means the only remaining place is on top of the paragraph.
+ */
+internal fun clearSheet(
+    column: ReadingBox,
+    safe: ReadingBox,
+    maxWidth: Float,
+    maxHeight: Float,
+    minWidth: Float,
+    minHeight: Float,
+    gap: Float,
+): ReadingBox? {
+    val options = mutableListOf<Pair<ReadingBox, Boolean>>()
+    fun add(box: ReadingBox, beside: Boolean) {
+        if (box.width < minWidth - 0.5f || box.height < minHeight - 0.5f) return
+        if (box.left < safe.left - 0.5f || box.top < safe.top - 0.5f ||
+            box.right > safe.right + 0.5f || box.bottom > safe.bottom + 0.5f
+        ) return
+        if (box.intersects(column)) return
+        options.add(box to beside)
+    }
+    val rightW = min(maxWidth, safe.right - column.right - gap)
+    if (rightW >= minWidth) {
+        val h = min(maxHeight, safe.height)
+        val top = column.top.coerceIn(safe.top, (safe.bottom - h).coerceAtLeast(safe.top))
+        if (top <= column.top + 1f) add(ReadingBox(column.right + gap, top, column.right + gap + rightW, top + h), true)
+    }
+    val leftW = min(maxWidth, column.left - safe.left - gap)
+    if (leftW >= minWidth) {
+        val h = min(maxHeight, safe.height)
+        val top = column.top.coerceIn(safe.top, (safe.bottom - h).coerceAtLeast(safe.top))
+        if (top <= column.top + 1f) add(ReadingBox(column.left - gap - leftW, top, column.left - gap, top + h), true)
+    }
+    val belowH = min(maxHeight, safe.bottom - column.bottom - gap)
+    if (belowH >= minHeight) {
+        val w = min(maxWidth, safe.width)
+        val left = column.left.coerceIn(safe.left, (safe.right - w).coerceAtLeast(safe.left))
+        add(ReadingBox(left, column.bottom + gap, left + w, column.bottom + gap + belowH), false)
+    }
+    val aboveH = min(maxHeight, column.top - safe.top - gap)
+    if (aboveH >= minHeight) {
+        val w = min(maxWidth, safe.width)
+        val left = column.left.coerceIn(safe.left, (safe.right - w).coerceAtLeast(safe.left))
+        add(ReadingBox(left, column.top - gap - aboveH, left + w, column.top - gap), false)
+    }
+    return options.minByOrNull { (box, beside) ->
+        (maxWidth - box.width) + (maxHeight - box.height) * .2f + if (beside) -480f else 0f
+    }?.first
+}
+
 /** Keep a card beside the paragraph when that paragraph only shifts. */
 internal fun followCard(card: ReadingBox, from: ReadingBox, to: ReadingBox, safe: ReadingBox): ReadingBox {
     val dx = to.centerX - from.centerX
@@ -300,6 +366,20 @@ internal fun verifyOverlayReadingRules() {
     check(dense.count { it > 0f } <= 2) { "Dense lines still produce a solid column of targets" }
     check(dense.zip(List(12) { it * 16f }).filter { it.first > 0f }.zipWithNext().all { (a, b) -> b.second >= a.second + a.first + 8f })
     check(clearOverlayWhenCaptureHidden(true).not() && clearOverlayWhenCaptureHidden(false))
+    val lines = listOf(ReadingBox(40f, 100f, 280f, 122f), ReadingBox(48f, 136f, 240f, 158f))
+    val wash = sourceWash(lines, 3f, 2f)
+    check(wash.size == 2 && wash[0].bottom < wash[1].top) { "Line washes merged into one block" }
+    check(wash[0].left >= 36f && wash[0].right <= 284f && wash[1].right <= 244f) { "The wash swallowed the margin" }
+    val besideSheet = clearSheet(column, wide, 280f, 160f, 160f, 96f, 8f)
+    check(besideSheet != null && besideSheet.left >= column.right && !besideSheet.intersects(column))
+    val narrowPage = ReadingBox(0f, 40f, 360f, 800f)
+    val narrowColumn = ReadingBox(16f, 180f, 344f, 260f)
+    val belowSheet = clearSheet(narrowColumn, narrowPage, 166f, 220f, 140f, 80f, 8f)
+    check(belowSheet != null && !belowSheet.intersects(narrowColumn) && belowSheet.width <= narrowPage.width * .5f) {
+        "A narrow page still covered the English"
+    }
+    val packed = ReadingBox(8f, 48f, 350f, 760f)
+    check(clearSheet(packed, narrowPage, 200f, 200f, 140f, 100f, 8f) == null)
 
     val followed = followCard(ReadingBox(500f, 200f, 780f, 360f), column, ReadingBox(column.left, column.top + 36f, column.right, column.bottom + 36f), wide)
     check(followed.top - 200f > 20f && !followed.intersects(ReadingBox(column.left, column.top + 36f, column.right, column.bottom + 36f)))

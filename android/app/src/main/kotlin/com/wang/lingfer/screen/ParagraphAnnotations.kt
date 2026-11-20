@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -30,11 +31,13 @@ internal class ParagraphAnnotations(
     private val onRecovery: () -> Unit,
     private val onWindowChange: (Boolean) -> Unit = {},
 ) {
-    private data class Anchor(val part: PageParagraph, val box: RectF)
+    private data class Anchor(val part: PageParagraph, val box: RectF, val lines: List<RectF>)
     private data class Mark(val anchor: Anchor, val bounds: RectF, val right: Boolean)
     private data class Note(val translation: String?, val message: String?, val recovery: String?, val cue: String? = null)
 
     private val marks = linkedMapOf<View, Mark>()
+    private var wash: SourceWash? = null
+    private var washRects: List<RectF> = emptyList()
     private var page: OcrPage? = null
     private var viewport = Rect()
     private var safe = RectF()
@@ -124,35 +127,39 @@ internal class ParagraphAnnotations(
         val part = incoming[current.part.id]?.takeIf { it.source == current.part.source }
             ?: incoming.values.firstOrNull { sourceRelated(it.source, current.part.source) }
             ?: return null
-        val box = paragraphBox(page, part.id) ?: return null
-        return Anchor(part, box)
+        val lines = lineBoxes(page, part.id)
+        if (lines.isEmpty()) return null
+        val box = RectF(lines.first()).apply { lines.drop(1).forEach { union(it) } }
+        return Anchor(part, box, lines)
     }
 
-    private fun paragraphBox(page: OcrPage, id: String): RectF? {
+    private fun lineBoxes(page: OcrPage, id: String): List<RectF> {
         val map = AnnotationCoordinates(page.width, page.height, viewport)
-        var box: RectF? = null
-        for (line in page.lines) {
-            if (line.paragraphId != id) continue
+        return page.lines.mapNotNull { line ->
+            if (line.paragraphId != id) return@mapNotNull null
             val screen = map.toScreen(line.box)
-            if (!screen.intersect(safe)) continue
-            if (box == null) box = screen else box.union(screen)
+            val visible = RectF(screen)
+            if (!visible.intersect(safe) || visible.isEmpty) null else visible
         }
-        return box
     }
 
     private fun anchorsFor(page: OcrPage): List<Anchor> {
         val map = AnnotationCoordinates(page.width, page.height, viewport)
         val boxes = mutableMapOf<String, RectF>()
+        val lines = mutableMapOf<String, MutableList<RectF>>()
         for (line in page.lines) {
             if (line.paragraphId !in parts) continue
-            val box = map.toScreen(line.box)
-            if (box.intersect(safe)) {
-                val previous = boxes[line.paragraphId]
-                if (previous == null) boxes[line.paragraphId] = box else previous.union(box)
-            }
+            val screen = map.toScreen(line.box)
+            val visible = RectF(screen)
+            if (!visible.intersect(safe) || visible.isEmpty) continue
+            val previous = boxes[line.paragraphId]
+            if (previous == null) boxes[line.paragraphId] = RectF(visible) else previous.union(visible)
+            lines.getOrPut(line.paragraphId) { mutableListOf() }.add(visible)
         }
         return page.paragraphs.mapNotNull { paragraph ->
-            boxes[paragraph.id]?.takeIf { parts[paragraph.id]?.source == paragraph.source }?.let { Anchor(paragraph, it) }
+            boxes[paragraph.id]?.takeIf { parts[paragraph.id]?.source == paragraph.source }?.let { box ->
+                Anchor(paragraph, box, lines[paragraph.id].orEmpty())
+            }
         }
     }
 
@@ -213,6 +220,44 @@ internal class ParagraphAnnotations(
         view.armed = false
     }
 
+    /**
+     * A flat tint, not a material. The source lines get a trace of paper;
+     * the rest of the page is only slightly quieter. No blur, stroke, or shadow.
+     */
+    private class SourceWash(context: Context) : View(context) {
+        private var lines = emptyList<RectF>()
+        private var originX = 0f
+        private var originY = 0f
+        private val dim = Paint().apply { color = Color.argb(14, 34, 40, 40) }
+        private val paper = Paint().apply { color = Color.argb(24, 250, 249, 244) }
+        init {
+            setWillNotDraw(false)
+            background = null
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+            contentDescription = "原文范围"
+        }
+        fun update(rects: List<RectF>, bounds: RectF) {
+            originX = bounds.left
+            originY = bounds.top
+            lines = rects
+            invalidate()
+        }
+        override fun onDraw(canvas: Canvas) {
+            if (lines.isEmpty() || width <= 0 || height <= 0) return
+            val local = lines.map { RectF(it.left - originX, it.top - originY, it.right - originX, it.bottom - originY) }
+            canvas.save()
+            val path = Path().apply {
+                fillType = Path.FillType.EVEN_ODD
+                addRect(0f, 0f, width.toFloat(), height.toFloat(), Path.Direction.CW)
+                local.forEach { addRect(it, Path.Direction.CW) }
+            }
+            canvas.clipPath(path)
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)
+            canvas.restore()
+            local.forEach { canvas.drawRect(it, paper) }
+        }
+    }
+
     /** Nothing at rest. While the finger is down, one hairline beside that first line. */
     private class MarginHit(context: Context) : View(context) {
         var armed = false
@@ -255,7 +300,7 @@ internal class ParagraphAnnotations(
         }?.anchor ?: return
         val part = parts[live.part.id]?.takeIf { it.source == live.part.source } ?: return
         if (pinned?.part?.id == live.part.id && pinned?.part?.source == live.part.source && card != null && displayed?.message != DEPARTED) return
-        mutate { showCard(Anchor(part, live.box), noteFor(part), "fresh") }
+        mutate { showCard(Anchor(part, live.box, live.lines), noteFor(part), "fresh") }
     }
 
     private fun showCard(anchor: Anchor, note: Note, mode: String) {
@@ -263,24 +308,39 @@ internal class ParagraphAnnotations(
         val gap = dp(8).toFloat()
         val inner = RectF(safe)
         val wide = safe.width() >= dp(600)
-        val widthCap = if (wide) safe.width() * .42f else safe.width() * .72f
-        val width = minOf(dp(300).toFloat(), widthCap, inner.width()).roundToInt().coerceAtLeast(1)
-        val maxHeight = min(dp(420), (safe.height() * .50f).roundToInt())
-            .coerceAtLeast(min(dp(168), safe.height().roundToInt().coerceAtLeast(1)))
+        val widthCap = if (wide) safe.width() * .40f else safe.width() * .46f
+        val maxWidth = minOf(dp(280).toFloat(), widthCap, inner.width())
+        val maxHeight = min(dp(420), (safe.height() * .46f).roundToInt())
+            .coerceAtLeast(min(dp(148), safe.height().roundToInt().coerceAtLeast(1)))
             .coerceAtMost(safe.height().roundToInt().coerceAtLeast(1))
-        val view = makeCard(anchor, note, width, maxHeight)
+        val slot = if (mode == "margin" || note.message == DEPARTED || note.cue == STILL) null else clearSheet(
+            ReadingBox(anchor.box.left, anchor.box.top, anchor.box.right, anchor.box.bottom),
+            ReadingBox(inner.left, inner.top, inner.right, inner.bottom),
+            maxWidth,
+            maxHeight.toFloat(),
+            min(dp(148).toFloat(), maxWidth),
+            min(dp(112).toFloat(), maxHeight.toFloat()),
+            gap,
+        )
+        val width = (slot?.width ?: maxWidth).roundToInt().coerceAtLeast(1)
+        val heightLimit = (slot?.height ?: maxHeight.toFloat()).roundToInt().coerceIn(1, maxHeight)
+        val view = makeCard(anchor, note, width, heightLimit)
         view.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(heightLimit, View.MeasureSpec.AT_MOST),
         )
         val height = view.measuredHeight.toFloat()
-        val box = when (mode) {
+        val box = if (slot != null && mode != "hold" && mode != "margin") {
+            RectF(slot.left, slot.top, slot.left + width, (slot.top + height).coerceAtMost(slot.bottom))
+        } else when (mode) {
             "margin" -> ParagraphPlacement.fit(inner.left + gap, inner.bottom - height - gap, width.toFloat(), height, inner)
             "follow" -> followedBox(anchor.box, width.toFloat(), height, inner) ?: freshBox(anchor, width.toFloat(), height, inner, gap)
             "hold" -> persistentRegion?.let { ParagraphPlacement.fit(it.left, it.top, width.toFloat(), height, inner) }
                 ?: freshBox(anchor, width.toFloat(), height, inner, gap)
             else -> freshBox(anchor, width.toFloat(), height, inner, gap)
         }
+        if (note.message == DEPARTED || note.cue == STILL || anchor.lines.isEmpty()) removeWash()
+        else showWash(anchor.lines)
         if (attach(view, box)) {
             card?.let(::detach)
             pinned = anchor
@@ -289,6 +349,37 @@ internal class ParagraphAnnotations(
             card = view
             persistentRegion = box
         }
+    }
+
+    private fun showWash(lines: List<RectF>) {
+        val rects = sourceWash(
+            lines.map { ReadingBox(it.left, it.top, it.right, it.bottom) },
+            dp(2).toFloat(),
+            dp(1).toFloat(),
+        ).map { RectF(it.left, it.top, it.right, it.bottom) }
+        if (rects.isEmpty()) {
+            removeWash()
+            return
+        }
+        val bounds = RectF(viewport)
+        val existing = wash?.layoutParams as? WindowManager.LayoutParams
+        val sameWindow = existing != null && existing.x == bounds.left.roundToInt() &&
+            existing.y == bounds.top.roundToInt() && existing.width == bounds.width().roundToInt() &&
+            existing.height == bounds.height().roundToInt()
+        if (!sameWindow) {
+            removeWash()
+            val view = SourceWash(context)
+            if (!attach(view, bounds, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)) return
+            wash = view
+        }
+        washRects = rects
+        wash?.update(rects, bounds)
+    }
+
+    private fun removeWash() {
+        wash?.let(::detach)
+        wash = null
+        washRects = emptyList()
     }
 
     private fun followedBox(next: RectF, width: Float, height: Float, inner: RectF): RectF? {
@@ -302,9 +393,8 @@ internal class ParagraphAnnotations(
         )
         val fitted = ParagraphPlacement.fit(shifted.left, shifted.top, width, height, inner)
         val column = ReadingBox(next.left, next.top, next.right, next.bottom)
-        val area = (column.width * column.height).coerceAtLeast(1f)
         val placed = ReadingBox(fitted.left, fitted.top, fitted.right, fitted.bottom)
-        if (placed.intersectionArea(column) > area * .35f) return null
+        if (placed.intersects(column)) return null
         return fitted
     }
 
@@ -448,6 +538,7 @@ internal class ParagraphAnnotations(
         pinnedBox = null
         displayed = null
         persistentRegion = null
+        removeWash()
     }
 
     private fun removeMarks() {
@@ -459,7 +550,7 @@ internal class ParagraphAnnotations(
         onWindowChange(true)
         try {
             change()
-            val next = marks.values.map { it.bounds } + listOfNotNull(persistentRegion)
+            val next = marks.values.map { it.bounds } + washRects + listOfNotNull(persistentRegion)
             if (regions != next) {
                 regions = next
                 onRegionsChanged()
@@ -472,14 +563,17 @@ internal class ParagraphAnnotations(
     /** Drops the invisible hits so a clean frame can be read. The open card stays. */
     fun hide() {
         page = null
-        if (marks.isNotEmpty()) mutate { removeMarks() }
+        if (marks.isNotEmpty() || wash != null) mutate {
+            removeMarks()
+            removeWash()
+        }
     }
 
     fun clear() {
         page = null
         parts = emptyMap()
         knownSources = emptySet()
-        if (marks.isNotEmpty() || card != null) mutate {
+        if (marks.isNotEmpty() || card != null || wash != null) mutate {
             removeMarks()
             removeCard()
         }
