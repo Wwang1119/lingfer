@@ -26,6 +26,7 @@ class NativePanelUiInstrumentation : Instrumentation() {
             val mixed="打开多个标签页即可同时访问不同网页\nThe evidence reveals a subtle distinction. Consider the essential argument before reaching a conclusion. A reliable method can improve your understanding."
             check(!NativeOcrEngine.languageSample(mixed).contains("打开")) {"Browser chrome dominated the article language sample"}
             check(NativeOcrEngine.languageSample("这是一篇中文小说，人物正在讨论下一步计划。").contains("中文小说"))
+            verifyOverlayReadingRules()
             verifyOcrOverlayIsolation()
             verifyAnnotationGeometry()
             verifyWordAnnotations()
@@ -56,6 +57,34 @@ class NativePanelUiInstrumentation : Instrumentation() {
             masked.getPixel(3, 32) == android.graphics.Color.WHITE &&
             masked.getPixel(50, 55) == android.graphics.Color.BLACK) { "OCR input includes an owned window or removed visible paper" }
         masked.recycle()
+        val cream = android.graphics.Color.rgb(250, 249, 244)
+        val paper = Bitmap.createBitmap(80, 60, Bitmap.Config.ARGB_8888)
+        paper.eraseColor(cream)
+        paper.setPixel(20, 20, android.graphics.Color.BLACK)
+        paper.setPixel(12, 20, android.graphics.Color.BLACK)
+        val painted = NativeOcrEngine.maskOverlayPixels(paper, listOf(android.graphics.RectF(16f, 16f, 28f, 28f)), 6f)
+        check(painted.getPixel(20, 20) == cream && painted.getPixel(12, 20) == cream) {
+            "Overlay ink or a glyph glued to the card edge survived the mask"
+        }
+        check(painted.getPixel(70, 50) == cream)
+        painted.recycle()
+        val crumb = OcrLine("c", "1X1à", android.graphics.RectF(8f, 2f, 42f, 16f), 0,
+            listOf(OcrWord("1X1à", android.graphics.RectF(8f, 2f, 42f, 16f), 0, 4)))
+        val button = OcrLine("d", "收起", android.graphics.RectF(40f, 80f, 70f, 98f), 5, emptyList())
+        val mark = OcrLine("m", "译", android.graphics.RectF(4f, 120f, 18f, 140f), 8, emptyList())
+        val glued = OcrLine("g", "tion", android.graphics.RectF(90f, 40f, 130f, 58f), 10,
+            listOf(OcrWord("tion", android.graphics.RectF(90f, 40f, 130f, 58f), 10, 14)))
+        val prose = "Researchers maintain that consistent practice matters."
+        val body = OcrLine("p", prose, android.graphics.RectF(40f, 180f, 300f, 210f), 20, emptyList())
+        val practiceAt = prose.indexOf("practice")
+        val crossed = OcrLine("x", prose, android.graphics.RectF(80f, 36f, 300f, 64f), 80,
+            listOf(OcrWord("practice", android.graphics.RectF(96f, 36f, 150f, 64f), 80 + practiceAt, 80 + practiceAt + "practice".length)))
+        val cleaned = OcrPage.suppressOverlayNoise(
+            listOf(crumb, button, mark, glued, body, crossed), 320, 400,
+            listOf(android.graphics.RectF(100f, 30f, 160f, 70f)), screenChrome = true,
+        )
+        check(cleaned.map { it.id } == listOf("p", "x")) { "Overlay text or a status crumb stayed in the page: ${cleaned.map { it.text }}" }
+        check(!cleaned.single { it.id == "x" }.text.contains("practice"))
         listOf("K", "Lib", "4/15", "4", "译", "x = 3").forEach { check(!OcrPage.isReadingParagraph(it)) }
         listOf("Abstract", "3 Model Architecture", "注意力机制", "In practice, we compute the attention function").forEach {
             check(OcrPage.isReadingParagraph(it))
@@ -143,22 +172,43 @@ class NativePanelUiInstrumentation : Instrumentation() {
                 for (palette in AnnotationPalette.values()) {
                     frame.eraseColor(if (palette == AnnotationPalette.LIGHT) android.graphics.Color.WHITE else android.graphics.Color.BLACK)
                     annotations.show(page(listOf(first)), listOf(hit), frame, screenArea = viewport)
-                    val gloss = added.keys.filterIsInstance<TextView>().single()
+                    check(added.keys.none { it is TextView }) { "A paper chip was drawn on the word" }
+                    check(annotations.regions.isEmpty()) { "A resting underline was treated as page text to mask" }
                     val mark = added.keys.filterIsInstance<AnnotationWordUnderline>().single()
-                    val labelBounds = annotations.regions.first()
-                    val markBounds = annotations.regions.last()
-                    check(!android.graphics.RectF.intersects(labelBounds, markBounds)) { "Gloss covers its source word" }
-                    check(gloss.text.toString() == "维持" && gloss.currentTextColor == palette.ink)
                     val params = added.getValue(mark)
-                    val drawing = Bitmap.createBitmap(params.width, params.height, Bitmap.Config.ARGB_8888)
-                    mark.layout(0, 0, params.width, params.height)
-                    mark.draw(android.graphics.Canvas(drawing))
                     check(params.x == box.left.toInt() && params.x + params.width == box.right.toInt()) {
                         "Underline width must match the actual OCR word"
                     }
+                    val density = context.resources.displayMetrics.density
+                    check(params.y >= box.bottom.toInt() - 1 && params.height <= kotlin.math.ceil(density * 12f).toInt()) {
+                        "The word window still covers the glyphs"
+                    }
+                    fun inkOf(armed: Boolean): Bitmap {
+                        mark.armed = armed
+                        mark.layout(0, 0, params.width, params.height)
+                        val drawing = Bitmap.createBitmap(params.width, params.height, Bitmap.Config.ARGB_8888)
+                        mark.draw(android.graphics.Canvas(drawing))
+                        return drawing
+                    }
+                    val resting = inkOf(false)
+                    check((0 until resting.width).all { x -> (0 until resting.height).all { y -> resting.getPixel(x, y) == 0 } }) {
+                        "The word underline is visible before the reader asks"
+                    }
+                    resting.recycle()
+                    val drawing = inkOf(true)
+                    check(params.flags and OVERLAY_FLAG_SLIPPERY != 0)
+                    selected.clear()
+                    val drag = android.view.MotionEvent.obtain(0, 0, android.view.MotionEvent.ACTION_DOWN, 4f, 2f, 0)
+                    val move = android.view.MotionEvent.obtain(0, 30, android.view.MotionEvent.ACTION_MOVE, 4f, 2f + density * 30f, 0)
+                    val up = android.view.MotionEvent.obtain(0, 60, android.view.MotionEvent.ACTION_UP, 4f, 2f + density * 30f, 0)
+                    mark.dispatchTouchEvent(drag); mark.dispatchTouchEvent(move); mark.dispatchTouchEvent(up)
+                    drag.recycle(); move.recycle(); up.recycle()
+                    check(selected.isEmpty()) { "A swipe that started on the underline opened the word" }
+                    check(params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0) {
+                        "The overlay kept accepting the swipe. This flag does not prove the reader scrolled."
+                    }
                     val center = params.width / 2
                     val inkRows = (0 until params.height).filter { drawing.getPixel(center, it) != android.graphics.Color.TRANSPARENT }
-                    val density = context.resources.displayMetrics.density
                     val thicknessLimit = kotlin.math.ceil(density * 1.1f).toInt().coerceAtLeast(1)
                     check(inkRows.size in 1..thicknessLimit && params.y + inkRows.first() > row.bottom &&
                         params.y + inkRows.first() <= row.bottom + kotlin.math.ceil(density * 1.2f) + 1) {
@@ -171,15 +221,14 @@ class NativePanelUiInstrumentation : Instrumentation() {
                     }
                     drawing.recycle()
                     selected.clear()
-                    gloss.performClick()
                     mark.performClick()
-                    check(selected == listOf(hit, hit)) { "Gloss and word should open the same word card" }
+                    check(selected == listOf(hit)) { "The underline should open the word note" }
                 }
                 annotations.show(page(listOf(first, adjacent)), listOf(hit), frame, screenArea = viewport)
-                check(added.keys.none { it is TextView }) { "Dense text must leave the original words uncovered" }
+                check(added.keys.none { it is TextView }) { "Dense text must not gain a paper chip" }
                 selected.clear()
                 added.keys.single().performClick()
-                check(selected == listOf(hit)) { "A word without space for a gloss must remain tappable" }
+                check(selected == listOf(hit)) { "A word underline must still open the note" }
                 annotations.hide()
                 check(added.keys.all { it.visibility == View.INVISIBLE })
             } finally {

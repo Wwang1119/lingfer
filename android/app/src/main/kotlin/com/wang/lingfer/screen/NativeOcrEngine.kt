@@ -29,15 +29,15 @@ class NativeOcrEngine {
         }
     }
 
-    fun recognize(bitmap: Bitmap, source: String, excluded: List<RectF> = emptyList(), callback: (OcrPage?, Exception?) -> Unit) {
-        recognize(InputImage.fromBitmap(bitmap, 0), bitmap.width, bitmap.height, source, excluded, callback)
+    fun recognize(bitmap: Bitmap, source: String, excluded: List<RectF> = emptyList(), screenChrome: Boolean = false, callback: (OcrPage?, Exception?) -> Unit) {
+        recognize(InputImage.fromBitmap(bitmap, 0), bitmap.width, bitmap.height, source, excluded, screenChrome, callback)
     }
 
-    fun recognize(image: InputImage, width: Int, height: Int, source: String, excluded: List<RectF> = emptyList(), callback: (OcrPage?, Exception?) -> Unit) {
+    fun recognize(image: InputImage, width: Int, height: Int, source: String, excluded: List<RectF> = emptyList(), screenChrome: Boolean = false, callback: (OcrPage?, Exception?) -> Unit) {
         if (closed) return
         recognizer(source).process(image).addOnSuccessListener { text ->
             if (closed) return@addOnSuccessListener
-            val page = OcrPage.from(text, width, height, excluded)
+            val page = OcrPage.from(text, width, height, excluded, screenChrome)
             identifier.identifyLanguage(languageSample(page.text).take(3000)).addOnCompleteListener { task ->
                 if (!closed) {
                     val detected = if (source !in listOf("auto", "chinese", "latin", "japanese", "korean", "devanagari")) source
@@ -50,13 +50,36 @@ class NativeOcrEngine {
     companion object {
         // Mask pixels before ML Kit groups them into words or identifies a script.
         // Post-recognition box tests alone cannot split mixed document/overlay words.
-        internal fun maskOverlayPixels(frame: Bitmap, excluded: List<RectF>): Bitmap {
-            if (excluded.isEmpty()) return frame
-            val result = if (frame.isMutable) frame else frame.copy(Bitmap.Config.ARGB_8888, true)
+        // The fill follows nearby paper and extends past the window, so a hard white
+        // edge or a leftover stroke is not read as a short fragment.
+        internal fun maskOverlayPixels(frame: Bitmap, excluded: List<RectF>, expandPx: Float = 10f): Bitmap {
+            if (excluded.isEmpty() || frame.width <= 0 || frame.height <= 0) return frame
+            val result = if (frame.isMutable && frame.config != Bitmap.Config.HARDWARE) frame
+                else frame.copy(Bitmap.Config.ARGB_8888, true)
             val canvas = Canvas(result)
-            val paper = Paint().apply { color = Color.WHITE }
-            for (box in excluded) canvas.drawRect(box, paper)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            val bounds = RectF(0f, 0f, result.width.toFloat(), result.height.toFloat())
+            for (box in excluded) {
+                val cover = RectF(box).apply { inset(-expandPx, -expandPx) }
+                if (!cover.intersect(bounds)) continue
+                paint.color = samplePaper(result, cover)
+                canvas.drawRect(cover, paint)
+            }
             return result
+        }
+
+        private fun samplePaper(bitmap: Bitmap, cover: RectF): Int {
+            val samples = ArrayList<Int>(8)
+            val xs = floatArrayOf(cover.left - 2f, cover.centerX(), cover.right + 2f)
+            val ys = floatArrayOf(cover.top - 2f, cover.centerY(), cover.bottom + 2f)
+            for (y in ys) for (x in xs) {
+                if (cover.contains(x, y)) continue
+                val px = x.toInt()
+                val py = y.toInt()
+                if (px < 0 || py < 0 || px >= bitmap.width || py >= bitmap.height) continue
+                samples.add(bitmap.getPixel(px, py))
+            }
+            return OcrNoise.paperColor(samples)
         }
 
 

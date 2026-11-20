@@ -1,13 +1,17 @@
 package com.wang.lingfer.screen
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Rect
 import android.graphics.RectF
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ScrollView
 import android.widget.TextView
+import kotlin.math.roundToInt
 
 /** The fake window manager retains real Android views and their exact input rectangles. */
 internal fun verifyParagraphAnnotations(context: Context) {
@@ -41,17 +45,54 @@ internal fun verifyParagraphAnnotations(context: Context) {
         changing = it
     }
     annotations.show(page, originals, true, null, area, emptyList())
-    check(!changing && views.size == 1)
-    val rail = annotations.regions.single()
-    check(rail.width() < area.width() * .12 && rail.right < area.centerX())
-    check(!rail.contains(area.exactCenterX(), rail.centerY()))
+    check(!changing)
+    val density = context.resources.displayMetrics.density
+    fun px(dp: Int) = (density * dp).roundToInt()
+    val marks = views.entries.filter { it.key.contentDescription?.startsWith("翻译此段：") == true }
+    check(marks.size == 2)
+    check(views.values.none { it.height > px(28) }) { "A full-height rail is still a toolbar" }
+    check(marks.all {
+        it.value.height <= px(22) && it.value.width <= px(20) &&
+            it.value.x >= px(4) && it.value.x + it.value.width <= area.right - px(4) &&
+            it.value.flags and OVERLAY_FLAG_SLIPPERY != 0
+    }) { "Hits should stay on the first line, inset from the edge" }
+    fun pixels(view: View): Bitmap {
+        val params = views.getValue(view)
+        view.layout(0, 0, params.width.coerceAtLeast(1), params.height.coerceAtLeast(1))
+        val bitmap = Bitmap.createBitmap(params.width.coerceAtLeast(1), params.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bitmap))
+        return bitmap
+    }
+    fun clear(bitmap: Bitmap) = (0 until bitmap.width).all { x -> (0 until bitmap.height).all { y -> bitmap.getPixel(x, y) == 0 } }
+    marks.forEach { (view, _) ->
+        val bitmap = pixels(view)
+        check(clear(bitmap)) { "The resting page drew a mark" }
+        bitmap.recycle()
+    }
+    val tops = marks.map { it.value.y }.sorted()
+    check(tops[1] > tops[0] + px(8)) { "Touch targets must leave a gap the page can scroll through" }
+    check(marks.all { it.value.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0 })
     val first = target("First paragraph.")
     val second = target("Second paragraph.")
-    val firstParams = first.layoutParams as android.widget.FrameLayout.LayoutParams
-    val secondParams = second.layoutParams as android.widget.FrameLayout.LayoutParams
-    check(first.parent === second.parent && firstParams.topMargin + firstParams.height == secondParams.topMargin)
-    first.performClick()
-    check(texts(card()).contains("正在翻译此段…") && annotations.regions.size == 2)
+    fun gesture(view: View, action: Int, y: Float, time: Long) {
+        val event = MotionEvent.obtain(0, time, action, 6f, y, 0)
+        view.dispatchTouchEvent(event)
+        event.recycle()
+    }
+    gesture(first, MotionEvent.ACTION_DOWN, 8f, 0)
+    gesture(first, MotionEvent.ACTION_MOVE, 8f + px(48), 40)
+    gesture(first, MotionEvent.ACTION_UP, 8f + px(48), 80)
+    check(views.keys.none { root -> descendants(root).any { it is ScrollView } }) { "A swipe past the slop opened a paragraph" }
+    check(views.getValue(first).flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0) {
+        "The overlay kept accepting the swipe. This flag does not prove the reader scrolled."
+    }
+    val afterSwipe = pixels(first)
+    check(clear(afterSwipe)) { "A finished swipe left ink on the page" }
+    afterSwipe.recycle()
+    gesture(first, MotionEvent.ACTION_DOWN, 8f, 200)
+    gesture(first, MotionEvent.ACTION_UP, 10f, 260)
+    check(texts(card()).contains("正在翻译此段…"))
+    check(annotations.regions.count { it.height() > area.height() * .2f } == 1) { "Only the open card should be a tall window" }
     annotations.show(page, ready, false, null, area, emptyList())
     check("译文 a" in texts(card()))
     val firstCard = card()
@@ -61,22 +102,52 @@ internal fun verifyParagraphAnnotations(context: Context) {
     val selectedCard = card()
     val selectedBounds = RectF(annotations.persistentRegion!!)
     check(longTranslation in texts(selectedCard) && "译文 a" !in texts(selectedCard))
-    check(RectF(area).contains(selectedBounds) && !RectF.intersects(rail, selectedBounds))
-    check(selectedBounds.height() <= area.height() * .35f && selectedBounds.width() <= area.width() * .86f)
+    check(RectF(area).contains(selectedBounds))
+    check(annotations.regions.filter { it.height() <= px(28) }.all { !RectF.intersects(it, selectedBounds) })
+    check(selectedBounds.height() <= area.height() * .55f && selectedBounds.width() <= area.width() * .75f)
+    val translation = descendants(selectedCard).filterIsInstance<TextView>().first { it.text.toString() == longTranslation }
+    val excerpt = named("原文节选：Second paragraph.") as TextView
+    val dismiss = named("收起本段译文") as TextView
+    check(excerpt.maxLines == 1 && excerpt.textSize < translation.textSize) { "The excerpt is still taller than the translation" }
+    check(translation.typeface == excerpt.typeface && excerpt.typeface == dismiss.typeface)
+    check(dismiss.background == null && dismiss.minimumHeight < px(36)) { "收起 is still a tall control" }
+    check(dismiss.currentTextColor == NativeReadingStyle.muted)
     val scroll = named("本段译文") as ScrollView
     selectedCard.layout(0, 0, selectedCard.measuredWidth, selectedCard.measuredHeight)
     check(scroll.canScrollVertically(1))
     check(scroll.height < scroll.getChildAt(0).height)
+    check(scroll.height > translation.textSize * 3) { "A long translation shows only a line or two" }
+    selectedCard.layout(0, 0, selectedCard.measuredWidth, selectedCard.measuredHeight)
+    check(translation.top < excerpt.top) { "The translation is not the first thing in the sheet" }
     annotations.show(page, ready, false, null, area, emptyList())
     check(card() === selectedCard && annotations.persistentRegion == selectedBounds)
 
+    val covered = OcrPage(listOf(row("a", "First paragraph.", 40f, 100f)), 320, 540)
+    annotations.show(covered, covered.paragraphs, false, null, area, emptyList())
+    check(longTranslation in texts(card()) && ParagraphAnnotations.STILL in texts(card()))
+    check(named("原文节选：Second paragraph.").visibility == View.VISIBLE)
+    check(texts(card()).none { it.contains("First paragraph.") })
+    check(kotlin.math.abs(annotations.persistentRegion!!.top - selectedBounds.top) < 6f) {
+        "A note that cannot see its paragraph jumped without saying so"
+    }
+
+    val shifted = OcrPage(listOf(row("a", "First paragraph.", 40f, 112f), row("b", "Second paragraph.", 40f, 292f)), 320, 540)
+    annotations.show(shifted, originals, true, null, area, emptyList())
+    check(longTranslation in texts(card()) && "正在翻译" !in texts(card()).joinToString() && ParagraphAnnotations.STILL !in texts(card()))
+    check(named("原文节选：Second paragraph.").visibility == View.VISIBLE)
+    check((annotations.persistentRegion!!.top - selectedBounds.top) > 8f) { "A small scroll left the card on the old line" }
+
     annotations.hide()
-    check(views.keys.single() === selectedCard && annotations.regions.single() == selectedBounds)
-    // Paragraph ids restart on a different page. A pinned source cannot silently change beneath its translation.
+    check(views.keys.single() === card() && annotations.persistentRegion != null) { "Hiding ticks for a clean frame removed the card" }
+    val keptAfterHide = annotations.persistentRegion
+    // A new page must not keep the old translation as if it described the new paragraph.
     val next = OcrPage(listOf(row("b", "Recycled id.", 45f, 90f), row("z", "x", 100f, 160f)), 320, 540)
     val visible = next.paragraphs.take(1)
     annotations.show(next, visible, true, null, area, emptyList())
-    check(card() === selectedCard && named("原文节选：Second paragraph.").visibility == View.VISIBLE)
+    check(named("原文节选：Second paragraph.").visibility == View.VISIBLE)
+    check(ParagraphAnnotations.DEPARTED in texts(card()) && longTranslation !in texts(card()))
+    check(texts(card()).none { it.contains("Recycled id.") })
+    check(annotations.persistentRegion != keptAfterHide) { "The card stayed on coordinates from the previous page" }
     check(views.keys.flatMap(::descendants).none { it.contentDescription == "翻译此段：x" })
     val newTarget = target("Recycled id.")
     newTarget.performClick()
@@ -89,12 +160,14 @@ internal fun verifyParagraphAnnotations(context: Context) {
     annotations.show(next, visible, false, "连接中断", area, emptyList())
     check(recover("重试翻译") && recoveries == 3)
     check(named("收起本段译文").performClick() && views.size == 1 && annotations.persistentRegion == null)
+    annotations.clear()
+    check(views.isEmpty() && annotations.regions.isEmpty()) { "clear() left a card that hide() is supposed to keep" }
 
     val columns = OcrPage(listOf(row("l", "Left text.", 20f, 96f, 121), row("r", "Right text.", 175f, 96f, 121)), 320, 540)
     annotations.show(columns, columns.paragraphs.map { it.copy(translation = it.source + " translated") }, false, null, area, emptyList())
     val left = annotations.regions.single { it.centerX() < area.centerX() }
     val right = annotations.regions.single { it.centerX() > area.centerX() }
-    check(views.size == 2 && left.right < right.left)
+    check(views.size == 2 && left.right < right.left && left.height() <= px(22) && right.height() <= px(22))
     target("Right text.").performClick()
     check("Right text. translated" in texts(card()))
     check(!RectF.intersects(annotations.persistentRegion!!, right) && !RectF.intersects(annotations.persistentRegion!!, left))
@@ -102,4 +175,41 @@ internal fun verifyParagraphAnnotations(context: Context) {
     check("Left text. translated" in texts(card()) && "Right text. translated" !in texts(card()))
     annotations.clear()
     check(views.isEmpty() && annotations.regions.isEmpty() && !changing && regionChanges > 5)
+
+    val upper = OcrLine("p1", "Researchers maintain that consistent practice matters.", RectF(40f, 80f, 250f, 98f), 0, emptyList(), "p")
+    val lower = OcrLine("p2", "The second line stays in the same paragraph.", RectF(44f, 116f, 230f, 134f), 60, emptyList(), "p")
+    val neighbour = OcrLine("q1", "A neighbour must stay unmarked.", RectF(40f, 168f, 220f, 186f), 120, emptyList(), "q")
+    val article = OcrPage(listOf(upper, lower, neighbour), 320, 540)
+    annotations.show(article, article.paragraphs, false, null, area, emptyList())
+    target("Researchers maintain that consistent practice matters.").performClick()
+    val wash = views.keys.single { it.contentDescription == "原文范围" }
+    val washParams = views.getValue(wash)
+    check(washParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+    wash.layout(0, 0, washParams.width, washParams.height)
+    val painted = Bitmap.createBitmap(washParams.width, washParams.height, Bitmap.Config.ARGB_8888)
+    wash.draw(Canvas(painted))
+    val scaleX = area.width() / 320f
+    val scaleY = area.height() / 540f
+    fun sample(x: Float, y: Float) = painted.getPixel((x * scaleX).toInt(), (y * scaleY).toInt())
+    val onLine = sample(90f, 89f)
+    val between = sample(90f, 107f)
+    val other = sample(90f, 177f)
+    check(android.graphics.Color.alpha(onLine) in 8..48 && android.graphics.Color.red(onLine) > 180) {
+        "The source wash should be a light paper tint, not a solid plate"
+    }
+    check(android.graphics.Color.alpha(between) < 32 && android.graphics.Color.red(between) < 80) {
+        "Line washes joined into one rectangle"
+    }
+    check(android.graphics.Color.red(other) < 80) { "The wash covered the next paragraph" }
+    val bands = annotations.regions.filter { it.width() > 120 && it.height() < 90 }.sortedBy { it.top }
+    check(bands.size >= 2 && bands[0].bottom < bands[1].top)
+    val sheet = annotations.persistentRegion!!
+    val source = RectF(40f * scaleX, 80f * scaleY, 250f * scaleX, 134f * scaleY)
+    check(!RectF.intersects(sheet, source)) { "The sheet covered the paragraph it explains" }
+    check(sheet.width() <= area.width() * .5f)
+    painted.recycle()
+    annotations.hide()
+    check(views.keys.none { it.contentDescription == "原文范围" } && views.isNotEmpty())
+    annotations.clear()
+    check(views.isEmpty())
 }

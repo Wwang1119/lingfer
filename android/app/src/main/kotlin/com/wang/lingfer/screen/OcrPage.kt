@@ -137,7 +137,8 @@ data class OcrPage(val lines: List<OcrLine>, val width: Int, val height: Int, va
             return continuation || (sameBlock && b.top - a.bottom <= height * .85f) || normalStep != null
         }
 
-        fun from(result: Text, width: Int, height: Int, excluded: List<RectF> = emptyList()): OcrPage {
+        fun from(result: Text, width: Int, height: Int, excluded: List<RectF> = emptyList(), screenChrome: Boolean = false): OcrPage {
+            val masks = excluded.map { ReadingBox(it.left, it.top, it.right, it.bottom).inflate(4f) }
             var offset = 0
             val lines = mutableListOf<OcrLine>()
             for ((blockIndex, block) in result.textBlocks.withIndex()) for (line in block.lines) {
@@ -155,7 +156,7 @@ data class OcrPage(val lines: List<OcrLine>, val width: Int, val height: Int, va
                         val local = line.text.indexOf(surface, cursor).takeIf { it >= 0 } ?: line.text.indexOf(surface)
                         if (local < 0) continue
                         cursor = local+surface.length
-                        if (excluded.any { it.contains(wordBox.centerX(), wordBox.centerY()) }) {
+                        if (OcrNoise.wordBlocked(ReadingBox(wordBox.left, wordBox.top, wordBox.right, wordBox.bottom), surface.count(Char::isLetter), masks)) {
                             for (index in local until minOf(local+surface.length, cleanText.size)) cleanText[index] = ' '
                             continue
                         }
@@ -167,7 +168,47 @@ data class OcrPage(val lines: List<OcrLine>, val width: Int, val height: Int, va
                 lines.add(OcrLine("s${lines.size}", value, box, start, words, "b$blockIndex"))
                 offset = start+value.length
             }
-            return OcrPage(groupParagraphs(lines), width, height)
+            return OcrPage(groupParagraphs(suppressOverlayNoise(lines, width, height, excluded, screenChrome)), width, height)
+        }
+
+        /**
+         * Drop overlay words, status-bar crumbs, and short pieces glued to a mask.
+         * A real paragraph that only touches the mask keeps its remaining words.
+         * [screenChrome] stays off for in-app photo OCR, which has no status band.
+         */
+        internal fun suppressOverlayNoise(
+            lines: List<OcrLine>,
+            width: Int,
+            height: Int,
+            excluded: List<RectF>,
+            screenChrome: Boolean,
+        ): List<OcrLine> {
+            val masks = excluded.map { ReadingBox(it.left, it.top, it.right, it.bottom).inflate(4f) }
+            val kept = mutableListOf<OcrLine>()
+            for (line in lines) {
+                val words = line.words.filter { word ->
+                    !OcrNoise.wordBlocked(
+                        ReadingBox(word.box.left, word.box.top, word.box.right, word.box.bottom),
+                        word.text.count(Char::isLetter),
+                        masks,
+                    )
+                }
+                val chars = line.text.toCharArray()
+                for (word in line.words) {
+                    if (word in words) continue
+                    val localStart = word.start - line.start
+                    val localEnd = word.end - line.start
+                    for (index in localStart until localEnd) if (index in chars.indices) chars[index] = ' '
+                }
+                val text = String(chars)
+                val box = ReadingBox(line.box.left, line.box.top, line.box.right, line.box.bottom)
+                if (text.isBlank()) continue
+                if (screenChrome && isOverlayLine(text)) continue
+                if (screenChrome && OcrNoise.chromeCrumb(text, box, height, ::isReadingParagraph)) continue
+                if (OcrNoise.gluedFragment(text, box, masks, ::isReadingParagraph)) continue
+                kept.add(if (text == line.text && words == line.words) line else line.copy(text = text, words = words))
+            }
+            return kept
         }
     }
 }
