@@ -3,10 +3,8 @@ package com.wang.lingfer.screen
 import android.content.Context
 import android.graphics.*
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.view.*
-import android.widget.TextView
 import kotlin.math.*
 
 /** Keep the gloss immediately beside its source word or omit it when that space is occupied. */
@@ -147,10 +145,17 @@ internal enum class AnnotationPalette(val paper: Int, val ink: Int, val marker: 
     }
 }
 
-/** Ink sits on the top edge, just under the word. The rest of the view is only a short touch gap. */
+/** A hairline under the word only while that word is being touched. The resting page stays clean. */
 internal class AnnotationWordUnderline(context: Context, color: Int, private val stroke: Int) : View(context) {
+    var armed = false
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
     override fun onDraw(canvas: Canvas) {
+        if (!armed) return
         val radius = stroke / 2f
         val bottom = stroke.toFloat().coerceAtMost(height.toFloat())
         canvas.drawRoundRect(0f, 0f, width.toFloat(), bottom, radius, radius, paint)
@@ -201,8 +206,6 @@ class GlassAnnotations(private val context: Context, private val windows: Window
         val viewport = screenArea ?: available
         val coordinates = AnnotationCoordinates(page.width, page.height, viewport)
         fun palette(area: RectF) = AnnotationPalette.at(snapshot, coordinates.toCapture(area))
-        val obstacles = page.words.map { coordinates.toScreen(it.box) } + avoid
-        val occupied = mutableListOf<RectF>()
         val safe = RectF(viewport.left + dp(8f), viewport.top + dp(32f), viewport.right - dp(8f), viewport.bottom - dp(48f))
         for (hit in hits.take(14)) {
             // Keep the underline below the glyphs even at the bottom of the
@@ -210,49 +213,27 @@ class GlassAnnotations(private val context: Context, private val windows: Window
             val runs = AnnotationGeometry.wordRuns(page, hit, coordinates, dp(3f)).filter { box ->
                 safe.contains(box) && box.bottom + dp(3f) <= safe.bottom && avoid.none { RectF.intersects(it, box) }
             }
-            val anchor = runs.firstOrNull() ?: continue
+            if (runs.isEmpty()) continue
             val caption = (hit.annotation ?: MultilingualTranslator.compact(hit.translation)).take(28)
             val description = "${hit.surface}：$caption，点按查看词卡"
-            val gloss = TextView(context).apply {
-                text = caption
-                textSize = 13f
-                includeFontPadding = false
-                typeface = Typeface.SERIF
-                gravity = Gravity.CENTER
-                setSingleLine()
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(6f).roundToInt(), dp(3f).roundToInt(), dp(6f).roundToInt(), dp(3f).roundToInt())
-                contentDescription = description
-            }
-            // Use the actual scaled typeface and padding when testing for available space.
-            val maxWidth = min(dp(168f), safe.width()).roundToInt().coerceAtLeast(1)
-            gloss.measure(View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST), View.MeasureSpec.UNSPECIFIED)
-            val place = if (caption.isBlank()) null else AnnotationLayout.place(
-                RectF(anchor).apply { bottom += dp(2f) }, gloss.measuredWidth.toFloat(), gloss.measuredHeight.toFloat(),
-                safe, obstacles, occupied, dp(3f)
-            )
-            val hasGloss = if (place == null) false else {
-                val colors = palette(place)
-                gloss.setTextColor(colors.ink)
-                gloss.background = GradientDrawable().apply {
-                    setColor(colors.paper)
-                    cornerRadius = dp(3f)
-                }
-                addOverlay(gloss, place, hit).also { if (it) occupied.add(place) }
-            }
             runs.forEachIndexed { index, run ->
                 val stroke = min(dp(1.1f), run.height() * .055f).roundToInt().coerceAtLeast(1)
                 val clearance = min(dp(1.2f), run.height() * .07f).roundToInt().coerceAtLeast(1)
-                // Touch only the gap under the word, not the glyphs, so a vertical swipe can leave the window.
+                // Touch only the gap under the word. Ink waits until the finger is down.
                 val target = RectF(run.left, run.bottom + clearance, run.right, run.bottom + clearance + max(stroke.toFloat(), dp(8f)))
                 val mark = AnnotationWordUnderline(context, palette(target).marker, stroke).apply {
-                    if (!hasGloss && index == 0) contentDescription = description
+                    if (index == 0) contentDescription = description
                     else importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
-                if (addOverlay(mark, target, hit)) occupied.add(target)
+                addOverlay(mark, target, hit)
             }
         }
-        regions = occupied.toList()
+        // Resting underlines have no ink, so they are not part of the OCR mask.
+        regions = emptyList()
+    }
+
+    private fun armUnderline(view: View) {
+        overlays.filterIsInstance<AnnotationWordUnderline>().forEach { it.armed = it == view }
     }
 
     private fun addOverlay(view: View, rect: RectF, hit: WordHit): Boolean {
@@ -268,7 +249,14 @@ class GlassAnnotations(private val context: Context, private val windows: Window
         }
         view.layoutParams = params
         view.setOnClickListener { onSelect(hit) }
-        bindOverlayTap(view, params, windows, ViewConfiguration.get(context).scaledTouchSlop) { view.performClick() }
+        bindOverlayTap(
+            view,
+            params,
+            windows,
+            ViewConfiguration.get(context).scaledTouchSlop,
+            onArm = { armUnderline(view) },
+            onRelease = { (view as? AnnotationWordUnderline)?.armed = false },
+        ) { view.performClick() }
         try {
             windows.addView(view, params)
         } catch (_: RuntimeException) {

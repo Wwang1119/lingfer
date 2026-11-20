@@ -110,13 +110,14 @@ class ScreenReaderService : Service(), SharedPreferences.OnSharedPreferenceChang
         override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
             if (capturedContentVisible == isVisible || stopping) return
             capturedContentVisible = isVisible
-            if (isVisible) {
-                forceCapture()
-            } else {
+            if (clearOverlayWhenCaptureHidden(isVisible)) {
+                // The captured page is gone. Leave no card on top of whatever replaced it.
                 revision.incrementAndGet()
                 cancelPageBatch()
                 clearAnnotations()
                 removePanel()
+            } else {
+                forceCapture()
             }
         }
     }

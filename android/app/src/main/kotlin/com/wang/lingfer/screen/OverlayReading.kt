@@ -50,37 +50,57 @@ internal object OverlayGesture {
 }
 
 /**
- * A short tick in the margin, outside the paragraph and inset from the display edge.
- * There is no full-height rail and no repeated 译.
- * Returns null when the only room would cover the text or sit on the bezel.
+ * Invisible hit beside the first line only. Nothing is drawn here.
+ * A long paragraph does not get a handle at its vertical centre.
+ * Returns null when the hit would cover the text or sit on the bezel.
  */
-internal fun marginMark(
+internal fun firstLineTarget(
     text: ReadingBox,
     safe: ReadingBox,
     right: Boolean,
-    markWidth: Float,
-    markHeight: Float,
+    width: Float,
+    lineHeight: Float,
     edgeInset: Float,
     gap: Float,
 ): ReadingBox? {
-    if (markWidth <= 0f || markHeight <= 0f || safe.width < markWidth + edgeInset * 2) return null
-    val top = (text.centerY - markHeight / 2f).coerceIn(safe.top, max(safe.top, safe.bottom - markHeight))
+    val height = lineHeight.coerceAtMost(28f)
+    if (width <= 0f || height < 8f || safe.width < width + edgeInset * 2) return null
+    val top = text.top.coerceIn(safe.top, (safe.bottom - height).coerceAtLeast(safe.top))
+    if (top > text.top + 1f) return null
     val x = if (right) {
         val minX = text.right + gap
-        val maxX = safe.right - edgeInset - markWidth
+        val maxX = safe.right - edgeInset - width
         if (minX > maxX + 0.5f) return null
         minX
     } else {
-        val maxX = text.left - gap - markWidth
+        val maxX = text.left - gap - width
         val minX = safe.left + edgeInset
         if (maxX + 0.5f < minX) return null
         maxX
     }
-    val box = ReadingBox(x, top, x + markWidth, top + markHeight)
+    val box = ReadingBox(x, top, x + width, top + height)
     if (box.intersects(text)) return null
     if (box.left < safe.left + edgeInset - 0.5f || box.right > safe.right - edgeInset + 0.5f) return null
     return box
 }
+
+/** Shorter hits, with a gap, so a dense margin never becomes one solid touch column. */
+internal fun firstLineHeights(tops: List<Float>, desired: Float, gap: Float, minimum: Float): List<Float> {
+    if (tops.isEmpty()) return emptyList()
+    val order = tops.indices.sortedBy { tops[it] }
+    val heights = FloatArray(tops.size)
+    for (position in order.indices) {
+        val index = order[position]
+        val next = order.getOrNull(position + 1)?.let { tops[order[it]] }
+        val room = if (next == null) desired else next - tops[index] - gap
+        val height = min(desired, room)
+        heights[index] = if (height < minimum) 0f else height
+    }
+    return heights.toList()
+}
+
+/** The captured page went away, so the overlay must not stay on top of something else. */
+internal fun clearOverlayWhenCaptureHidden(captureVisible: Boolean) = !captureVisible
 
 /** Keep a card beside the paragraph when that paragraph only shifts. */
 internal fun followCard(card: ReadingBox, from: ReadingBox, to: ReadingBox, safe: ReadingBox): ReadingBox {
@@ -250,6 +270,7 @@ internal val overlayLines = setOf(
     "切换译文语言",
     "重试翻译",
     "原段已离开这一页",
+    "还停在原来的这一段",
 )
 
 internal fun isOverlayLine(text: String) = text.trim().trimEnd('。') in overlayLines || text.trim() in overlayLines
@@ -266,11 +287,19 @@ internal fun verifyOverlayReadingRules() {
     val below = ReadingPlacement.card(full, ReadingBox(20f, 140f, 28f, 148f), 250f, 140f, phone, emptyList(), 8f)
     check(!below.intersects(full) && below.top >= full.bottom) { "A full-width paragraph should keep the note off its own lines" }
 
-    val edge = marginMark(column, wide, right = false, markWidth = 12f, markHeight = 20f, edgeInset = 16f, gap = 6f)
-    check(edge != null && edge.right <= column.left && edge.left >= wide.left + 16f && !edge.intersects(column))
-    val tight = marginMark(ReadingBox(10f, 40f, 80f, 80f), ReadingBox(0f, 0f, 100f, 200f), false, 12f, 20f, 16f, 6f)
-    check(tight == null) { "A tick was drawn on the text or on the bezel" }
-    check(marginMark(column, wide, true, 12f, 20f, 16f, 6f)?.left ?: 0f >= column.right)
+    val edge = firstLineTarget(column, wide, false, 18f, 20f, 16f, 6f)
+    check(edge != null && edge.right <= column.left && edge.top == column.top && edge.height <= 28f && !edge.intersects(column))
+    val tall = ReadingBox(80f, 100f, 460f, 520f)
+    val atFirstLine = firstLineTarget(tall, wide, false, 18f, 22f, 16f, 6f)
+    check(atFirstLine != null && atFirstLine.top == tall.top && atFirstLine.centerY < tall.centerY - 80f) {
+        "A long paragraph got a handle at its middle"
+    }
+    val tight = firstLineTarget(ReadingBox(10f, 40f, 80f, 80f), ReadingBox(0f, 0f, 100f, 200f), false, 18f, 20f, 16f, 6f)
+    check(tight == null) { "A hit area covered the text or the bezel" }
+    val dense = firstLineHeights(List(12) { it * 16f }, desired = 22f, gap = 8f, minimum = 12f)
+    check(dense.count { it > 0f } <= 2) { "Dense lines still produce a solid column of targets" }
+    check(dense.zip(List(12) { it * 16f }).filter { it.first > 0f }.zipWithNext().all { (a, b) -> b.second >= a.second + a.first + 8f })
+    check(clearOverlayWhenCaptureHidden(true).not() && clearOverlayWhenCaptureHidden(false))
 
     val followed = followCard(ReadingBox(500f, 200f, 780f, 360f), column, ReadingBox(column.left, column.top + 36f, column.right, column.bottom + 36f), wide)
     check(followed.top - 200f > 20f && !followed.intersects(ReadingBox(column.left, column.top + 36f, column.right, column.bottom + 36f)))

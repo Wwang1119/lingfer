@@ -22,7 +22,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Short margin ticks and the open note. The page keeps every other touch. */
+/** Invisible first-line hits, and the open note. The resting page has nothing drawn on it. */
 internal class ParagraphAnnotations(
     private val context: Context,
     private val windows: WindowManager,
@@ -32,7 +32,7 @@ internal class ParagraphAnnotations(
 ) {
     private data class Anchor(val part: PageParagraph, val box: RectF)
     private data class Mark(val anchor: Anchor, val bounds: RectF, val right: Boolean)
-    private data class Note(val translation: String?, val message: String?, val recovery: String?)
+    private data class Note(val translation: String?, val message: String?, val recovery: String?, val cue: String? = null)
 
     private val marks = linkedMapOf<View, Mark>()
     private var page: OcrPage? = null
@@ -87,23 +87,26 @@ internal class ParagraphAnnotations(
         )
         val note = when (motion) {
             "update", "live" -> noteFor(located!!.part)
-            "follow" -> if (!displayed?.translation.isNullOrBlank()) displayed else noteFor(located!!.part)
-            "keep-covered" -> displayed
+            "follow" -> (if (!displayed?.translation.isNullOrBlank()) displayed else noteFor(located!!.part))?.copy(cue = null)
+            "keep-covered" -> displayed?.copy(cue = STILL)
             "departed" -> Note(null, DEPARTED, null)
             else -> null
         }
         val boxMoved = located != null && pinnedBox?.let { moved(it, located.box) } == true
-        // A small move follows the paragraph. A page turn replaces the translation
-        // with a departure note instead of leaving the old card on new text.
+        // A small move follows the paragraph. If the paragraph is still the one on
+        // screen but its box cannot be seen, the card may stay and must say so.
+        // A page turn drops the translation instead of pairing it with new text.
         val redraw = when (motion) {
-            "none", "keep-covered" -> false
+            "none" -> false
+            "keep-covered" -> displayed?.cue != STILL
             "departed" -> displayed?.message != DEPARTED
             else -> note != displayed || viewportChanged || boxMoved
         }
         if (!rebuild && !redraw) return
-        val subject = if (motion == "departed") anchor else located ?: anchor
+        val subject = if (motion == "departed" || motion == "keep-covered") anchor else located ?: anchor
         val mode = when {
             motion == "departed" -> "margin"
+            motion == "keep-covered" -> "hold"
             boxMoved -> "follow"
             persistentRegion != null -> "hold"
             else -> "fresh"
@@ -165,36 +168,61 @@ internal class ParagraphAnnotations(
         val groups = if (columns) listOf((anchors - right.toSet()) to false, right to true) else listOf(anchors to false)
         val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
         val safeBox = ReadingBox(safe.left, safe.top, safe.right, safe.bottom)
+        val desired = dp(18).toFloat()
+        val gap = dp(8).toFloat()
         for ((group, onRight) in groups) {
-            for (anchor in group) {
-                val place = marginMark(
+            val ordered = group.sortedBy { it.box.top }
+            val heights = firstLineHeights(ordered.map { it.box.top }, desired, gap, dp(10).toFloat())
+            for ((anchor, height) in ordered.zip(heights)) {
+                if (height <= 0f) continue
+                val place = firstLineTarget(
                     ReadingBox(anchor.box.left, anchor.box.top, anchor.box.right, anchor.box.bottom),
                     safeBox,
                     onRight,
-                    dp(6).toFloat(),
-                    dp(20).toFloat(),
+                    dp(8).toFloat(),
+                    height,
                     dp(2).toFloat(),
-                    dp(2).toFloat(),
+                    dp(4).toFloat(),
                 ) ?: continue
                 val bounds = RectF(place.left, place.top, place.right, place.bottom)
-                val view = MarginTick(context).apply {
+                val view = MarginHit(context).apply {
                     contentDescription = "翻译此段：${anchor.part.source.take(64)}"
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                     setOnClickListener { select(anchor) }
                 }
                 if (!attach(view, bounds, OVERLAY_FLAG_SLIPPERY)) continue
-                bindOverlayTap(view, view.layoutParams as WindowManager.LayoutParams, windows, touchSlop) {
-                    view.performClick()
-                }
+                bindOverlayTap(
+                    view,
+                    view.layoutParams as WindowManager.LayoutParams,
+                    windows,
+                    touchSlop,
+                    onArm = { arm(view) },
+                    onRelease = { disarm(view) },
+                ) { view.performClick() }
                 marks[view] = Mark(anchor, bounds, onRight)
             }
         }
     }
 
-    /** A pencil tick in the margin. No bar, no badge, no character for OCR to read back. */
-    private class MarginTick(context: Context) : View(context) {
+    private fun arm(view: MarginHit) {
+        marks.keys.filterIsInstance<MarginHit>().forEach { if (it != view) it.armed = false }
+        view.armed = true
+    }
+
+    private fun disarm(view: MarginHit) {
+        view.armed = false
+    }
+
+    /** Nothing at rest. While the finger is down, one hairline beside that first line. */
+    private class MarginHit(context: Context) : View(context) {
+        var armed = false
+            set(value) {
+                if (field == value) return
+                field = value
+                invalidate()
+            }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(120, 54, 95, 112)
+            color = Color.argb(70, 54, 95, 112)
             strokeCap = Paint.Cap.ROUND
             style = Paint.Style.STROKE
         }
@@ -205,10 +233,10 @@ internal class ParagraphAnnotations(
         }
 
         override fun onDraw(canvas: Canvas) {
-            paint.strokeWidth = max(1f, density)
-            val x = width / 2f
-            val inset = height * .30f
-            canvas.drawLine(x, inset, x, height - inset, paint)
+            if (!armed) return
+            paint.strokeWidth = max(1f, .8f * density)
+            val y = height / 2f
+            canvas.drawLine(width * .2f, y, width * .8f, y, paint)
         }
     }
 
@@ -297,9 +325,10 @@ internal class ParagraphAnnotations(
     }
 
     private fun makeCard(anchor: Anchor, note: Note, width: Int, maxHeight: Int): View {
+        val face = Typeface.SERIF
         val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(16), dp(16))
+            setPadding(dp(18), dp(16), dp(16), dp(10))
             background = GradientDrawable().apply {
                 setColor(NativeReadingStyle.readingPaper)
                 cornerRadius = dp(18).toFloat()
@@ -309,63 +338,38 @@ internal class ParagraphAnnotations(
             elevation = 0f
             isClickable = true
         }
-        val captionRow = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
-        captionRow.addView(TextView(context).apply {
-            text = "原文"
-            textSize = 12f
-            letterSpacing = .14f
-            typeface = Typeface.SERIF
-            setTextColor(NativeReadingStyle.muted)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        captionRow.addView(TextView(context).apply {
-            text = "收起"
-            textSize = 13f
-            contentDescription = "收起本段译文"
-            gravity = Gravity.CENTER
-            setTextColor(NativeReadingStyle.muted)
-            background = null
-            minHeight = dp(44)
-            minWidth = dp(44)
-            setOnClickListener { mutate { removeCard() } }
-        })
-        panel.addView(captionRow)
-        panel.addView(TextView(context).apply {
-            text = anchor.part.source
-            contentDescription = "原文节选：${anchor.part.source.take(96)}"
-            textSize = 15.5f
-            typeface = Typeface.SERIF
-            setTextColor(NativeReadingStyle.muted)
-            setLineSpacing(dp(3).toFloat(), 1.05f)
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, dp(6), dp(4), dp(12))
-        })
         val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(2), dp(2), 0)
         }
-        val copy = TextView(context).apply {
+        body.addView(TextView(context).apply {
             text = note.translation ?: note.message
-            textSize = if (note.translation != null) 17.5f else 15f
-            typeface = Typeface.SERIF
+            textSize = if (note.translation != null) 17.5f else 15.5f
+            typeface = face
             setLineSpacing(dp(7).toFloat(), 1.12f)
             setTextColor(if (note.translation != null) NativeReadingStyle.ink else NativeReadingStyle.muted)
+        })
+        note.cue?.let { cue ->
+            body.addView(TextView(context).apply {
+                text = cue
+                textSize = 13f
+                typeface = face
+                setTextColor(NativeReadingStyle.muted)
+                setPadding(0, dp(8), 0, 0)
+            })
         }
-        body.addView(copy)
         note.recovery?.let { label ->
             body.addView(TextView(context).apply {
                 text = label
                 textSize = 14f
-                minHeight = dp(44)
-                gravity = Gravity.CENTER_VERTICAL
-                typeface = Typeface.SERIF
+                typeface = face
                 setTextColor(NativeReadingStyle.accent)
                 background = null
+                setPadding(0, dp(8), 0, 0)
                 setOnClickListener { onRecovery() }
             })
         }
         body.measure(
-            View.MeasureSpec.makeMeasureSpec((width - dp(36)).coerceAtLeast(1), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec((width - dp(34)).coerceAtLeast(1), View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
         val scroll = ScrollView(context).apply {
@@ -373,10 +377,34 @@ internal class ParagraphAnnotations(
             isFillViewport = false
             addView(body)
         }
-        val reserved = dp(150)
+        val reserved = dp(52)
         val room = (maxHeight - reserved).coerceAtLeast(dp(96))
         val bodyHeight = if (body.measuredHeight > room) room else LinearLayout.LayoutParams.WRAP_CONTENT
         panel.addView(scroll, LinearLayout.LayoutParams(-1, bodyHeight))
+        val footer = LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        footer.addView(TextView(context).apply {
+            text = anchor.part.source
+            contentDescription = "原文节选：${anchor.part.source.take(96)}"
+            textSize = 13f
+            typeface = face
+            setTextColor(NativeReadingStyle.muted)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        footer.addView(TextView(context).apply {
+            text = "收起"
+            textSize = 13f
+            typeface = face
+            contentDescription = "收起本段译文"
+            setTextColor(NativeReadingStyle.muted)
+            background = null
+            setPadding(dp(10), dp(2), 0, dp(2))
+            setOnClickListener { mutate { removeCard() } }
+        })
+        panel.addView(footer)
         return panel
     }
 
@@ -441,7 +469,7 @@ internal class ParagraphAnnotations(
         }
     }
 
-    /** Drops the ticks so a clean frame can be read. The open card stays. */
+    /** Drops the invisible hits so a clean frame can be read. The open card stays. */
     fun hide() {
         page = null
         if (marks.isNotEmpty()) mutate { removeMarks() }
@@ -461,6 +489,7 @@ internal class ParagraphAnnotations(
 
     companion object {
         const val DEPARTED = "原段已离开这一页"
+        const val STILL = "还停在原来的这一段"
     }
 }
 
@@ -508,21 +537,25 @@ internal class OverlayTap(private val slop: Float) {
 }
 
 /**
- * A settled tap opens the note. Past the slop the window stops taking touches and,
- * where the platform honors it, FLAG_SLIPPERY hands the rest of the gesture to the reader.
- * Returning true here only stops this view from also clicking; it is not what scrolls the page.
+ * A settled tap opens the note. Past the slop this view does not click.
+ * NOT_TOUCHABLE and SLIPPERY are requested afterwards. Nothing here shows that
+ * the reader received the rest of the swipe.
  */
 internal fun bindOverlayTap(
     view: View,
     params: WindowManager.LayoutParams,
     windows: WindowManager,
     slop: Int,
+    onArm: () -> Unit = {},
+    onRelease: () -> Unit = {},
     onTap: () -> Unit,
 ) {
     val tap = OverlayTap(slop.toFloat())
     view.setOnTouchListener { _, event ->
         val fire = tap.onTouch(event.actionMasked, event.x, event.y)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) onArm()
         if (tap.scrolling) {
+            onRelease()
             view.isPressed = false
             view.isClickable = false
             if (params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0) {
@@ -535,7 +568,11 @@ internal fun bindOverlayTap(
                 }, 520)
             }
         }
-        if (fire) onTap()
+        if (fire) {
+            onRelease()
+            onTap()
+        }
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) onRelease()
         true
     }
 }

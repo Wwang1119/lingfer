@@ -1,6 +1,8 @@
 package com.wang.lingfer.screen
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Rect
 import android.graphics.RectF
 import android.view.MotionEvent
@@ -48,12 +50,25 @@ internal fun verifyParagraphAnnotations(context: Context) {
     fun px(dp: Int) = (density * dp).roundToInt()
     val marks = views.entries.filter { it.key.contentDescription?.startsWith("翻译此段：") == true }
     check(marks.size == 2)
-    check(views.values.none { it.height > px(24) }) { "A full-height rail is still a toolbar" }
+    check(views.values.none { it.height > px(28) }) { "A full-height rail is still a toolbar" }
     check(marks.all {
-        it.value.height <= px(22) && it.value.width <= px(10) &&
+        it.value.height <= px(22) && it.value.width <= px(20) &&
             it.value.x >= px(4) && it.value.x + it.value.width <= area.right - px(4) &&
             it.value.flags and OVERLAY_FLAG_SLIPPERY != 0
-    }) { "Margin marks should be short, inset, and able to release a swipe" }
+    }) { "Hits should stay on the first line, inset from the edge" }
+    fun pixels(view: View): Bitmap {
+        val params = views.getValue(view)
+        view.layout(0, 0, params.width.coerceAtLeast(1), params.height.coerceAtLeast(1))
+        val bitmap = Bitmap.createBitmap(params.width.coerceAtLeast(1), params.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bitmap))
+        return bitmap
+    }
+    fun clear(bitmap: Bitmap) = (0 until bitmap.width).all { x -> (0 until bitmap.height).all { y -> bitmap.getPixel(x, y) == 0 } }
+    marks.forEach { (view, _) ->
+        val bitmap = pixels(view)
+        check(clear(bitmap)) { "The resting page drew a mark" }
+        bitmap.recycle()
+    }
     val tops = marks.map { it.value.y }.sorted()
     check(tops[1] > tops[0] + px(8)) { "Touch targets must leave a gap the page can scroll through" }
     check(marks.all { it.value.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0 })
@@ -69,8 +84,11 @@ internal fun verifyParagraphAnnotations(context: Context) {
     gesture(first, MotionEvent.ACTION_UP, 8f + px(48), 80)
     check(views.keys.none { root -> descendants(root).any { it is ScrollView } }) { "A swipe past the slop opened a paragraph" }
     check(views.getValue(first).flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0) {
-        "The mark kept the gesture after it became a scroll"
+        "The overlay kept accepting the swipe. This flag does not prove the reader scrolled."
     }
+    val afterSwipe = pixels(first)
+    check(clear(afterSwipe)) { "A finished swipe left ink on the page" }
+    afterSwipe.recycle()
     gesture(first, MotionEvent.ACTION_DOWN, 8f, 200)
     gesture(first, MotionEvent.ACTION_UP, 10f, 260)
     check(texts(card()).contains("正在翻译此段…"))
@@ -87,21 +105,35 @@ internal fun verifyParagraphAnnotations(context: Context) {
     check(RectF(area).contains(selectedBounds))
     check(annotations.regions.filter { it.height() <= px(28) }.all { !RectF.intersects(it, selectedBounds) })
     check(selectedBounds.height() <= area.height() * .55f && selectedBounds.width() <= area.width() * .75f)
+    val translation = descendants(selectedCard).filterIsInstance<TextView>().first { it.text.toString() == longTranslation }
     val excerpt = named("原文节选：Second paragraph.") as TextView
-    check(excerpt.textSize >= 15f * density && excerpt.maxLines >= 2) { "The source line is still a cramped caption" }
     val dismiss = named("收起本段译文") as TextView
-    check(dismiss.background == null && dismiss.currentTextColor == com.wang.lingfer.screen.NativeReadingStyle.muted)
+    check(excerpt.maxLines == 1 && excerpt.textSize < translation.textSize) { "The excerpt is still taller than the translation" }
+    check(translation.typeface == excerpt.typeface && excerpt.typeface == dismiss.typeface)
+    check(dismiss.background == null && dismiss.minimumHeight < px(36)) { "收起 is still a tall control" }
+    check(dismiss.currentTextColor == NativeReadingStyle.muted)
     val scroll = named("本段译文") as ScrollView
     selectedCard.layout(0, 0, selectedCard.measuredWidth, selectedCard.measuredHeight)
     check(scroll.canScrollVertically(1))
     check(scroll.height < scroll.getChildAt(0).height)
-    check(scroll.height > excerpt.textSize * 3) { "A long translation shows only a line or two" }
+    check(scroll.height > translation.textSize * 3) { "A long translation shows only a line or two" }
+    selectedCard.layout(0, 0, selectedCard.measuredWidth, selectedCard.measuredHeight)
+    check(translation.top < excerpt.top) { "The translation is not the first thing in the sheet" }
     annotations.show(page, ready, false, null, area, emptyList())
     check(card() === selectedCard && annotations.persistentRegion == selectedBounds)
 
+    val covered = OcrPage(listOf(row("a", "First paragraph.", 40f, 100f)), 320, 540)
+    annotations.show(covered, covered.paragraphs, false, null, area, emptyList())
+    check(longTranslation in texts(card()) && ParagraphAnnotations.STILL in texts(card()))
+    check(named("原文节选：Second paragraph.").visibility == View.VISIBLE)
+    check(texts(card()).none { it.contains("First paragraph.") })
+    check(kotlin.math.abs(annotations.persistentRegion!!.top - selectedBounds.top) < 6f) {
+        "A note that cannot see its paragraph jumped without saying so"
+    }
+
     val shifted = OcrPage(listOf(row("a", "First paragraph.", 40f, 112f), row("b", "Second paragraph.", 40f, 292f)), 320, 540)
     annotations.show(shifted, originals, true, null, area, emptyList())
-    check(longTranslation in texts(card()) && "正在翻译" !in texts(card()).joinToString())
+    check(longTranslation in texts(card()) && "正在翻译" !in texts(card()).joinToString() && ParagraphAnnotations.STILL !in texts(card()))
     check(named("原文节选：Second paragraph.").visibility == View.VISIBLE)
     check((annotations.persistentRegion!!.top - selectedBounds.top) > 8f) { "A small scroll left the card on the old line" }
 
