@@ -221,6 +221,7 @@ class ScreenReaderService : Service(), SharedPreferences.OnSharedPreferenceChang
                 if (stopping || fence != cleanFence.get()) return@post
                 cancelPageBatch()
                 annotations.hide()
+                // Rails can leave so the next frame is clean. The open translation card stays.
                 paragraphAnnotations.hide()
                 overlaysHidden = true
                 requestCleanFrame(fence)
@@ -298,14 +299,18 @@ class ScreenReaderService : Service(), SharedPreferences.OnSharedPreferenceChang
             val options = ReadingOptions.load(prefs)
             // Any frame captured before hide completion cannot contribute text
             // from our own labels. Their rectangles are known locally.
-            val excluded = candidateMasks + listOf(RectF(0f, 0f, bitmap.width.toFloat(), dp(24).toFloat()),
-                RectF(0f, bitmap.height-dp(22).toFloat(), bitmap.width.toFloat(), bitmap.height.toFloat()))
+            val topBand = chromeTop(bitmap.height)
+            val bottomBand = chromeBottom(bitmap.height)
+            val excluded = candidateMasks + listOf(
+                RectF(0f, 0f, bitmap.width.toFloat(), topBand),
+                RectF(0f, bitmap.height - bottomBand, bitmap.width.toFloat(), bitmap.height.toFloat()),
+            )
             val hadCard = candidateHasCard
             val input = NativeOcrEngine.maskOverlayPixels(bitmap, excluded)
             if (input !== bitmap) bitmap.recycle()
             main.post {
                 if (stopping) { input.recycle(); busy = false; return@post }
-                ocr.recognize(input, options.source, excluded) { page, error ->
+                ocr.recognize(input, options.source, excluded, screenChrome = true) { page, error ->
                     busy = false
                     if (stopping || token != revision.get() || paused || detailOpen || !capturedContentVisible || ScreenReaderState.hostActive) { input.recycle(); return@recognize }
                     if (page == null) { input.recycle(); fail("文字暂未读清，停稳页面后会自动重试。"); return@recognize }
@@ -392,7 +397,14 @@ class ScreenReaderService : Service(), SharedPreferences.OnSharedPreferenceChang
         cancelPageBatch()
         activeKey = key
         currentHits = emptyList()
-        currentPageParts = if (sameParagraphs) currentPageParts else originals
+        val remembered = currentPageParts.mapNotNull { part ->
+            part.translation?.takeIf { it.isNotBlank() }?.let { part.source to it }
+        }.toMap()
+        // A scroll assigns new line ids. Keep a finished translation for the same source
+        // so the open card is not replaced by an empty "正在翻译".
+        currentPageParts = if (sameParagraphs) currentPageParts else originals.map { part ->
+            remembered[part.source]?.let { part.copy(translation = it) } ?: part
+        }
         val source = if (options.source == "auto") page.language else options.source
         pageTranslationError = when {
             originals.isEmpty() -> null
@@ -855,12 +867,16 @@ class ScreenReaderService : Service(), SharedPreferences.OnSharedPreferenceChang
     }
     private fun fail(message:String) { readingError=message;ScreenReaderState.emit(mapOf("kind" to "error","message" to message)); Log.d("LingferScreen","Reading is waiting for a usable page or connection") }
     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+    private fun chromeTop(height: Int) = OcrNoise.chromeHeight(height, dp(40).toFloat(), 0.04f, 0.08f)
+    private fun chromeBottom(height: Int) = OcrNoise.chromeHeight(height, dp(28).toFloat(), 0.03f, 0.07f)
 
     private fun sample(image:Image, own:List<RectF>):IntArray {
         val plane=image.planes[0]; val buffer=plane.buffer; val values=IntArray(64*72)
+        val topBand = chromeTop(image.height)
+        val bottomBand = chromeBottom(image.height)
         for (y in 0 until 72) for (x in 0 until 64) {
             val px=((x+.5f)*image.width/64).toInt().coerceIn(0,image.width-1); val py=((y+.5f)*image.height/72).toInt().coerceIn(0,image.height-1)
-            if (py<dp(24) || py>image.height-dp(22) || own.any { it.contains(px.toFloat(),py.toFloat()) }) { values[y*64+x]=-1;continue }
+            if (py < topBand || py > image.height - bottomBand || own.any { it.contains(px.toFloat(), py.toFloat()) }) { values[y*64+x]=-1;continue }
             val index=py*plane.rowStride+px*plane.pixelStride
             val r=buffer.get(index).toInt() and 255;val g=buffer.get(index+1).toInt() and 255;val b=buffer.get(index+2).toInt() and 255
             values[y*64+x]=(r*3+g*6+b)/10

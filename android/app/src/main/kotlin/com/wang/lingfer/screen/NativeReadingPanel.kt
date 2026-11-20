@@ -17,6 +17,8 @@ import org.json.JSONArray
 internal object NativeReadingStyle {
     val background = Color.rgb(246, 246, 243)
     val paper = Color.WHITE
+    /** Warm sheet used by the in-app reader and the live translation card. */
+    val readingPaper = Color.rgb(250, 249, 244)
     val ink = Color.rgb(34, 40, 40)
     val muted = Color.rgb(102, 112, 115)
     val accent = Color.rgb(54, 95, 112)

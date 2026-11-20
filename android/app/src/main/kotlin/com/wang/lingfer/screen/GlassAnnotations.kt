@@ -126,8 +126,9 @@ internal object AnnotationGeometry {
 }
 
 internal enum class AnnotationPalette(val paper: Int, val ink: Int, val marker: Int) {
-    LIGHT(Color.rgb(250, 239, 215), Color.rgb(83, 54, 28), Color.rgb(142, 103, 54)),
-    DARK(Color.rgb(65, 51, 37), Color.rgb(255, 229, 187), Color.rgb(226, 186, 128));
+    // Same paper and navy ink as the reader. The underline is not a second brand color.
+    LIGHT(Color.rgb(250, 249, 244), Color.rgb(34, 40, 40), Color.rgb(54, 95, 112)),
+    DARK(Color.rgb(28, 36, 40), Color.rgb(236, 232, 223), Color.rgb(186, 204, 210));
 
     companion object {
         /** A few pixels from the existing local clean frame are enough to choose the paper color. */
@@ -146,12 +147,13 @@ internal enum class AnnotationPalette(val paper: Int, val ink: Int, val marker: 
     }
 }
 
-/** The transparent tap area covers the word; only its lower edge carries ink. */
+/** Ink sits on the top edge, just under the word. The rest of the view is only a short touch gap. */
 internal class AnnotationWordUnderline(context: Context, color: Int, private val stroke: Int) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
     override fun onDraw(canvas: Canvas) {
         val radius = stroke / 2f
-        canvas.drawRoundRect(0f, (height - stroke).toFloat(), width.toFloat(), height.toFloat(), radius, radius, paint)
+        val bottom = stroke.toFloat().coerceAtMost(height.toFloat())
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), bottom, radius, radius, paint)
     }
 }
 
@@ -215,7 +217,7 @@ class GlassAnnotations(private val context: Context, private val windows: Window
                 text = caption
                 textSize = 13f
                 includeFontPadding = false
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                typeface = Typeface.SERIF
                 gravity = Gravity.CENTER
                 setSingleLine()
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -241,9 +243,9 @@ class GlassAnnotations(private val context: Context, private val windows: Window
             runs.forEachIndexed { index, run ->
                 val stroke = min(dp(1.1f), run.height() * .055f).roundToInt().coerceAtLeast(1)
                 val clearance = min(dp(1.2f), run.height() * .07f).roundToInt().coerceAtLeast(1)
-                val target = RectF(run).apply { bottom += clearance + stroke }
-                val strip = RectF(target.left, target.bottom - stroke, target.right, target.bottom)
-                val mark = AnnotationWordUnderline(context, palette(strip).marker, stroke).apply {
+                // Touch only the gap under the word, not the glyphs, so a vertical swipe can leave the window.
+                val target = RectF(run.left, run.bottom + clearance, run.right, run.bottom + clearance + max(stroke.toFloat(), dp(8f)))
+                val mark = AnnotationWordUnderline(context, palette(target).marker, stroke).apply {
                     if (!hasGloss && index == 0) contentDescription = description
                     else importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }
@@ -262,8 +264,11 @@ class GlassAnnotations(private val context: Context, private val windows: Window
             gravity = Gravity.TOP or Gravity.LEFT
             x = left
             y = top
+            flags = flags or OVERLAY_FLAG_SLIPPERY
         }
+        view.layoutParams = params
         view.setOnClickListener { onSelect(hit) }
+        bindOverlayTap(view, params, windows, ViewConfiguration.get(context).scaledTouchSlop) { view.performClick() }
         try {
             windows.addView(view, params)
         } catch (_: RuntimeException) {
