@@ -16,12 +16,14 @@ String locateFailureLabel(LocateFailure failure) {
     LocateFailure.textMismatch => '文本与行不一致，已失败关闭',
     LocateFailure.fileHashMissing => '没有文件身份，已失败关闭',
     LocateFailure.pageIdentityUnproven => '未能确认选区所在页',
+    LocateFailure.pageSizeInconsistent => '同页尺寸不一致，已失败关闭',
   };
 }
 
 String restoreVerdictLabel(RestoreVerdict verdict) {
   return switch (verdict) {
     RestoreVerdict.selectionRestored => '原句已恢复',
+    RestoreVerdict.fixtureConditionsMet => '仅夹具条件满足，不是真实回位',
     RestoreVerdict.unverified => '回位未验证',
     RestoreVerdict.failed => '回位失败',
   };
@@ -116,6 +118,11 @@ class PdfOfflineProbeView extends StatelessWidget {
                           key: const Key('pdf-probe-leave'),
                           onPressed: () => session.leave(readViewport()),
                           child: const Text('记录离开时视野'),
+                        ),
+                        TextButton(
+                          key: const Key('pdf-probe-dismiss'),
+                          onPressed: session.dismissAnchor,
+                          child: const Text('关闭本次选句'),
                         ),
                       ],
                     ),

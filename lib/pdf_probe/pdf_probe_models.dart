@@ -1,5 +1,7 @@
 import 'dart:ui';
 
+import 'pdf_text_norm.dart';
+
 /// Where a page number on a captured line came from.
 ///
 /// [publicCurrentPageGetter] is the public `getSelectedTextLines` result.
@@ -27,6 +29,18 @@ class PdfViewport {
   final double width;
   final double height;
   final PdfOrientation orientation;
+
+  /// Scroll may be zero. Zoom and both viewport axes must be finite and positive.
+  bool get isLegal {
+    return zoom.isFinite &&
+        zoom > 0 &&
+        width.isFinite &&
+        width > 0 &&
+        height.isFinite &&
+        height > 0 &&
+        scrollX.isFinite &&
+        scrollY.isFinite;
+  }
 
   static const identity = PdfViewport(
     zoom: 1,
@@ -69,7 +83,14 @@ class PdfSelectionSnapshot {
   final PageEvidenceKind evidence;
   final String? fileHash;
 
-  bool get isUntaggedClear => selectedText == null || selectedText!.isEmpty;
+  /// Blank after the frozen comparison rule, or a null callback.
+  ///
+  /// TAB and NBSP survive that rule, so they are not treated as a clear.
+  bool get isUntaggedClear {
+    final text = selectedText;
+    if (text == null) return true;
+    return normalizeSelectionText(text).isEmpty;
+  }
 
   PdfSelectionSnapshot copy() {
     return PdfSelectionSnapshot(
@@ -95,6 +116,7 @@ enum LocateFailure {
   textMismatch,
   fileHashMissing,
   pageIdentityUnproven,
+  pageSizeInconsistent,
 }
 
 class PdfAnchor {
@@ -102,11 +124,13 @@ class PdfAnchor {
     required this.fileHash,
     required this.pageNumber,
     required this.lines,
+    required this.evidence,
   });
 
   final String fileHash;
   final int pageNumber;
   final List<PdfLineSnapshot> lines;
+  final PageEvidenceKind evidence;
 }
 
 class MemoryAnnotation {
@@ -155,17 +179,26 @@ class PdfRestorePlan {
 
 class PdfLeaveRecord {
   const PdfLeaveRecord({
+    required this.selectionGeneration,
     required this.viewport,
     required this.anchor,
     required this.annotation,
     required this.failure,
+    required this.pendingUnsettled,
   });
 
+  final int selectionGeneration;
   final PdfViewport viewport;
   final PdfAnchor? anchor;
   final MemoryAnnotation? annotation;
   final LocateFailure? failure;
+
+  /// The leave happened before the current callback was decided.
+  /// Its viewport must not be paired with an older anchor.
+  final bool pendingUnsettled;
 }
+
+enum ObservationSource { syntheticFixture, deviceObserved }
 
 /// Observations supplied by a caller. Null visual fields mean they were not
 /// observed. This probe never fills them from a device.
@@ -181,6 +214,10 @@ class ReadbackObservation {
     required this.highlightOnGlyphs,
     required this.cardOccludesSentence,
     required this.stableFrameCount,
+    required this.source,
+    required this.targetFileHash,
+    required this.targetPageNumber,
+    required this.leaveSelectionGeneration,
   });
 
   final double zoom;
@@ -192,7 +229,13 @@ class ReadbackObservation {
   final bool? sentenceVisible;
   final bool? highlightOnGlyphs;
   final bool? cardOccludesSentence;
+
+  /// A caller-supplied count. One or three does not prove stability.
   final int stableFrameCount;
+  final ObservationSource source;
+  final String? targetFileHash;
+  final int? targetPageNumber;
+  final int? leaveSelectionGeneration;
 
   factory ReadbackObservation.unknownMatchingGeometry(PdfLeaveRecord record) {
     final viewport = record.viewport;
@@ -207,11 +250,20 @@ class ReadbackObservation {
       highlightOnGlyphs: null,
       cardOccludesSentence: null,
       stableFrameCount: 0,
+      source: ObservationSource.syntheticFixture,
+      targetFileHash: record.anchor?.fileHash,
+      targetPageNumber: record.anchor?.pageNumber,
+      leaveSelectionGeneration: record.selectionGeneration,
     );
   }
 }
 
-enum RestoreVerdict { selectionRestored, unverified, failed }
+enum RestoreVerdict {
+  selectionRestored,
+  fixtureConditionsMet,
+  unverified,
+  failed,
+}
 
 /// Proposed only. [classifyRestore] does not treat these deltas as a pass.
 const double kProposedUncalibratedZoomDelta = 0.01;

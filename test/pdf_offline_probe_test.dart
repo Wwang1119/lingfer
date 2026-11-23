@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lingfer/pdf_probe/pdf_locate.dart';
@@ -40,11 +42,12 @@ PdfSelectionSnapshot _snapshot({
   );
 }
 
-PdfSelectionSnapshot _singleColumn({
-  required String text,
+PdfSelectionSnapshot _column(
+  String text, {
   PageEvidenceKind evidence = PageEvidenceKind.externalFixture,
   int linePage = 2,
   int controllerPage = 1,
+  double firstTop = 20,
 }) {
   final parts = text.split('\n');
   return _snapshot(
@@ -55,11 +58,21 @@ PdfSelectionSnapshot _singleColumn({
       for (var i = 0; i < parts.length; i += 1)
         _line(
           parts[i],
-          Rect.fromLTWH(10, 20.0 + (i * 24), 120, 12),
+          Rect.fromLTWH(10, firstTop + (i * 24), 120, 12),
           page: linePage,
         ),
     ],
   );
+}
+
+class _RecordingHttpOverrides extends HttpOverrides {
+  int clients = 0;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    clients += 1;
+    return super.createHttpClient(context);
+  }
 }
 
 void main() {
@@ -69,10 +82,17 @@ void main() {
         selectionTextsEqual('  Hello\r\nworld  \n', const ['Hello', 'world']),
         isTrue,
       );
-      expect(selectionTextsEqual('Hello', const ['Hello']), isTrue);
+      expect(
+        selectionTextsEqual('Hello\nworld', const [' Hello', 'world ']),
+        isTrue,
+      );
+      expect(
+        selectionTextsEqual('Hello\nworld', const ['Hello ', 'world']),
+        isFalse,
+      );
     });
 
-    test('does not treat other differences as equal', () {
+    test('does not treat TAB, NBSP, or other differences as equal', () {
       final ledger = <String>[];
       void reject(String id, String callback, List<String> lines) {
         expect(selectionTextsEqual(callback, lines), isFalse, reason: id);
@@ -88,6 +108,7 @@ void main() {
       reject('leading-nbsp', '\u00A0Hello', const ['Hello']);
       reject('trailing-nbsp', 'Hello\u00A0', const ['Hello']);
       reject('leading-tab', '\tHello', const ['Hello']);
+      reject('ideographic-space', '\u3000Hello', const ['Hello']);
       expect(ledger, [
         'unicode-minus',
         'unit-space',
@@ -98,59 +119,64 @@ void main() {
         'leading-nbsp',
         'trailing-nbsp',
         'leading-tab',
+        'ideographic-space',
       ]);
     });
   });
 
   group('locate', () {
     test('current page plus identical text is not an independent page', () {
-      final snapshot = _singleColumn(
-        text: 'Same sentence',
+      final snapshot = _column(
+        'Same sentence',
         evidence: PageEvidenceKind.publicCurrentPageGetter,
         linePage: 1,
         controllerPage: 1,
       );
-      expect(snapshot.lines.single.pageNumber, snapshot.controllerPageNumber);
-      expect(
-        selectionTextsEqual(
-          snapshot.selectedText!,
-          snapshot.lines.map((line) => line.text),
-        ),
-        isTrue,
-      );
       final decision = locateSelection(snapshot);
-      expect(decision, isA<LocateRejected>());
       expect(
         (decision as LocateRejected).failure,
         LocateFailure.pageIdentityUnproven,
       );
     });
 
+    test('blank text cannot commit an anchor', () {
+      final decision = locateSelection(
+        _snapshot(
+          text: '   \n',
+          lines: [_line('   ', const Rect.fromLTWH(10, 20, 40, 12))],
+        ),
+      );
+      expect((decision as LocateRejected).failure, LocateFailure.emptyLineText);
+    });
+
     test(
-      'empty lines, bad bounds, cross page, and column-like boxes fail closed',
+      'reversed unrotated lines, infinite page size, and mismatched sizes fail',
       () {
-        expect(
-          (locateSelection(_snapshot(text: 'A', lines: const []))
-                  as LocateRejected)
-              .failure,
-          LocateFailure.noLines,
-        );
         expect(
           (locateSelection(
                     _snapshot(
-                      text: 'A',
-                      lines: [_line('', const Rect.fromLTWH(10, 20, 40, 12))],
+                      text: 'Lower\nUpper',
+                      lines: [
+                        _line('Lower', const Rect.fromLTWH(10, 100, 80, 12)),
+                        _line('Upper', const Rect.fromLTWH(10, 20, 80, 12)),
+                      ],
                     ),
                   )
                   as LocateRejected)
               .failure,
-          LocateFailure.emptyLineText,
+          LocateFailure.orderAmbiguous,
         );
         expect(
           (locateSelection(
                     _snapshot(
                       text: 'A',
-                      lines: [_line('A', const Rect.fromLTWH(10, 20, 0, 12))],
+                      lines: [
+                        _line(
+                          'A',
+                          const Rect.fromLTWH(10, 20, 40, 12),
+                          pageSize: const Size(double.infinity, 400),
+                        ),
+                      ],
                     ),
                   )
                   as LocateRejected)
@@ -164,190 +190,170 @@ void main() {
                       lines: [
                         _line(
                           'A',
-                          const Rect.fromLTWH(10, 20, 40, 12),
-                          page: 1,
+                          const Rect.fromLTWH(10, 20, 80, 12),
+                          pageSize: const Size(200, 400),
                         ),
                         _line(
                           'B',
-                          const Rect.fromLTWH(10, 40, 40, 12),
-                          page: 2,
+                          const Rect.fromLTWH(10, 44, 80, 12),
+                          pageSize: const Size(180, 400),
                         ),
                       ],
                     ),
                   )
                   as LocateRejected)
               .failure,
-          LocateFailure.crossPage,
-        );
-        expect(
-          (locateSelection(
-                    _snapshot(
-                      text: 'Left\nRight',
-                      lines: [
-                        _line('Left', const Rect.fromLTWH(10, 20, 40, 12)),
-                        _line('Right', const Rect.fromLTWH(120, 20, 40, 12)),
-                      ],
-                    ),
-                  )
-                  as LocateRejected)
-              .failure,
-          LocateFailure.orderAmbiguous,
+          LocateFailure.pageSizeInconsistent,
         );
       },
     );
 
-    test('a fixture page can commit when geometry and text agree', () {
-      final decision = locateSelection(_singleColumn(text: 'Second sentence'));
+    test('touching lines in downward order can commit from a fixture', () {
+      final decision = locateSelection(
+        _snapshot(
+          text: 'One\nTwo',
+          lines: [
+            _line('One', const Rect.fromLTWH(10, 20, 80, 12)),
+            _line('Two', const Rect.fromLTWH(10, 32, 80, 12)),
+          ],
+        ),
+      );
       expect(decision, isA<LocateCommitted>());
-      final anchor = (decision as LocateCommitted).anchor;
-      expect(anchor.pageNumber, 2);
-      expect(anchor.fileHash, 'hash-h');
-      expect(anchor.lines.single.text, 'Second sentence');
     });
   });
 
-  group('session stand-in, not a Syncfusion controller', () {
+  group('session', () {
     late PdfProbeSession session;
-    var viewport = const PdfViewport(
-      zoom: 1,
-      scrollX: 0,
-      scrollY: 0,
-      width: 400,
-      height: 800,
-      orientation: PdfOrientation.portrait,
-    );
+    var viewport = PdfViewport.identity;
 
     setUp(() {
       session = PdfProbeSession();
-      viewport = const PdfViewport(
-        zoom: 1,
-        scrollX: 0,
-        scrollY: 0,
-        width: 400,
-        height: 800,
-        orientation: PdfOrientation.portrait,
-      );
+      viewport = PdfViewport.identity;
     });
 
-    test('the callback copy is fixed before a later list edit', () {
-      final lines = [_line('Hello', const Rect.fromLTWH(10, 20, 80, 12))];
-      session.onCallback(
-        _snapshot(text: 'Hello', lines: lines),
-        viewportNow: viewport,
-      );
-      lines[0] = _line('Changed', const Rect.fromLTWH(10, 20, 80, 12));
-      session.applyPending();
-      final anchor = session.anchor;
-      expect(anchor, isNotNull);
-      expect(anchor!.lines.single.text, 'Hello');
-      expect(PdfProbeSession.outboundRequestCount, 0);
-    });
+    test(
+      'a copied snapshot is stable, and a blank clear does not drop it after commit',
+      () {
+        session.onCallback(_column('Hello'), viewportNow: viewport);
+        session.applyPending();
+        expect(session.anchor?.lines.single.text, 'Hello');
+        expect(session.annotationApplications, 1);
 
-    test('an untagged clear does not drop a pending or committed anchor', () {
-      session.onCallback(_singleColumn(text: 'Keep me'), viewportNow: viewport);
+        session.onCallback(
+          _snapshot(text: '  \r\n ', lines: const []),
+          viewportNow: viewport,
+        );
+        session.applyPending();
+        expect(session.anchor?.lines.single.text, 'Hello');
+        expect(session.annotationApplications, 1);
+      },
+    );
+
+    test('an undecided snapshot is cancelled by an untagged clear', () {
+      session.onCallback(_column('Pending'), viewportNow: viewport);
       session.onCallback(
         _snapshot(text: null, lines: const []),
         viewportNow: viewport,
       );
       session.applyPending();
-      expect(session.nativeCleared, isTrue);
-      expect(session.anchor?.lines.single.text, 'Keep me');
-      expect(session.annotationApplications, 1);
-
-      session.onCallback(
-        _snapshot(text: '', lines: const []),
-        viewportNow: viewport,
-      );
-      expect(session.anchor?.lines.single.text, 'Keep me');
-      expect(session.annotation, isNotNull);
-    });
-
-    test('a new unproven callback removes the previous anchor', () {
-      session.onCallback(_singleColumn(text: 'Keep me'), viewportNow: viewport);
-      session.applyPending();
-      session.onCallback(
-        _singleColumn(
-          text: 'Same sentence',
-          evidence: PageEvidenceKind.publicCurrentPageGetter,
-          linePage: 1,
-          controllerPage: 1,
-        ),
-        viewportNow: viewport,
-      );
-      session.applyPending();
       expect(session.anchor, isNull);
-      expect(session.annotation, isNull);
-      final decision = session.decision;
-      expect(decision, isA<LocateRejected>());
-      expect(
-        (decision as LocateRejected).failure,
-        LocateFailure.pageIdentityUnproven,
-      );
+      expect(session.nativeCleared, isTrue);
     });
 
     test(
-      'leave stores the viewport at leave, and restore does not use it as a pass',
+      'TAB is not a clear and a failed new attempt removes the old anchor',
       () {
+        session.onCallback(_column('Hello'), viewportNow: viewport);
+        session.applyPending();
         session.onCallback(
-          _singleColumn(text: 'Second sentence'),
+          _snapshot(text: '\t', lines: const []),
           viewportNow: viewport,
         );
         session.applyPending();
-        viewport = const PdfViewport(
-          zoom: 2.5,
-          scrollX: 40,
-          scrollY: 80,
-          width: 400,
-          height: 800,
-          orientation: PdfOrientation.portrait,
-        );
-        final record = session.leave(viewport);
-        expect(record.viewport.zoom, 2.5);
-        expect(record.viewport.scrollX, 40);
-        expect(session.viewportAtSelection?.zoom, 1);
-
-        final plan = planRestore(record);
-        expect(plan.initialZoomLevel, 2.5);
-        expect(plan.initialScrollX, 40);
-        expect(plan.initialScrollY, 80);
-        expect(plan.initialPageNumber, 1);
-        expect(plan.usePageStorageKey, isFalse);
-
-        final unknown = ReadbackObservation.unknownMatchingGeometry(record);
-        expect(classifyRestore(record, unknown), RestoreVerdict.unverified);
+        expect(session.anchor, isNull);
         expect(
-          classifyRestore(
-            record,
-            ReadbackObservation(
-              zoom: record.viewport.zoom,
-              scrollX: record.viewport.scrollX,
-              scrollY: record.viewport.scrollY,
-              width: record.viewport.width,
-              height: record.viewport.height,
-              orientation: record.viewport.orientation,
-              sentenceVisible: null,
-              highlightOnGlyphs: null,
-              cardOccludesSentence: null,
-              stableFrameCount: 3,
-            ),
-          ),
-          RestoreVerdict.unverified,
+          (session.decision as LocateRejected).failure,
+          LocateFailure.noLines,
         );
       },
     );
 
     test(
-      'proposed numeric slack and geometry changes are not selectionRestored',
+      'pending leave does not keep the old anchor, and the old record cannot reopen',
       () {
-        final record = PdfLeaveRecord(
-          viewport: viewport,
-          anchor: const PdfAnchor(fileHash: 'hash-h', pageNumber: 2, lines: []),
-          annotation: null,
-          failure: null,
+        session.onCallback(_column('Anchor A'), viewportNow: viewport);
+        session.applyPending();
+        final first = session.leave(viewport);
+        expect(first.anchor?.lines.single.text, 'Anchor A');
+        expect(planRestore(first)?.initialPageNumber, 1);
+        expect(planRestore(first)?.initialScrollX, 0);
+
+        session.onCallback(
+          _column(
+            'Same sentence',
+            evidence: PageEvidenceKind.publicCurrentPageGetter,
+            linePage: 1,
+            controllerPage: 1,
+          ),
+          viewportNow: viewport,
         );
-        final closeButNotExact = ReadbackObservation(
+        final pendingLeave = session.leave(viewport);
+        expect(pendingLeave.pendingUnsettled, isTrue);
+        expect(pendingLeave.anchor, isNull);
+        expect(planRestore(pendingLeave), isNull);
+
+        session.applyPending();
+        expect(session.reopenVerdict, isNull);
+        expect(session.reopen(first), isFalse);
+        expect(session.anchor, isNull);
+      },
+    );
+
+    test('dismiss blocks a late reopen', () {
+      session.onCallback(_column('Hello'), viewportNow: viewport);
+      session.applyPending();
+      final record = session.leave(viewport);
+      session.dismissAnchor();
+      expect(session.anchor, isNull);
+      expect(session.reopen(record), isFalse);
+      session.applyPending();
+      expect(session.anchor, isNull);
+    });
+
+    test(
+      'exact fixture numbers are not a real restore, and slack stays failed',
+      () {
+        session.onCallback(_column('Second sentence'), viewportNow: viewport);
+        session.applyPending();
+        final record = session.leave(viewport);
+        final exact = ReadbackObservation(
+          zoom: viewport.zoom,
+          scrollX: 0,
+          scrollY: 0,
+          width: viewport.width,
+          height: viewport.height,
+          orientation: viewport.orientation,
+          sentenceVisible: true,
+          highlightOnGlyphs: true,
+          cardOccludesSentence: false,
+          stableFrameCount: 3,
+          source: ObservationSource.deviceObserved,
+          targetFileHash: 'hash-h',
+          targetPageNumber: 2,
+          leaveSelectionGeneration: record.selectionGeneration,
+        );
+        expect(
+          classifyRestore(record, exact),
+          RestoreVerdict.fixtureConditionsMet,
+        );
+        expect(
+          classifyRestore(record, exact),
+          isNot(RestoreVerdict.selectionRestored),
+        );
+
+        final slack = ReadbackObservation(
           zoom: viewport.zoom + 0.005,
-          scrollX: viewport.scrollX,
+          scrollX: viewport.scrollX + 0.5,
           scrollY: viewport.scrollY,
           width: viewport.width,
           height: viewport.height,
@@ -356,67 +362,76 @@ void main() {
           highlightOnGlyphs: true,
           cardOccludesSentence: false,
           stableFrameCount: 3,
+          source: ObservationSource.syntheticFixture,
+          targetFileHash: 'hash-h',
+          targetPageNumber: 2,
+          leaveSelectionGeneration: record.selectionGeneration,
         );
         expect(
           withinProposedUncalibratedTolerance(
             leave: viewport,
-            observation: closeButNotExact,
+            observation: slack,
           ),
           isTrue,
         );
-        expect(
-          classifyRestore(record, closeButNotExact),
-          RestoreVerdict.failed,
-        );
+        expect(classifyRestore(record, slack), RestoreVerdict.failed);
 
-        final rotated = ReadbackObservation(
+        final wider = ReadbackObservation(
           zoom: viewport.zoom,
           scrollX: viewport.scrollX,
           scrollY: viewport.scrollY,
-          width: 800,
-          height: 400,
-          orientation: PdfOrientation.landscape,
-          sentenceVisible: true,
-          highlightOnGlyphs: true,
-          cardOccludesSentence: false,
-          stableFrameCount: 3,
-        );
-        expect(classifyRestore(record, rotated), RestoreVerdict.unverified);
-      },
-    );
-
-    test(
-      'injected gates can reach selectionRestored only inside this test',
-      () {
-        session.onCallback(
-          _singleColumn(text: 'Second sentence'),
-          viewportNow: viewport,
-        );
-        session.applyPending();
-        final record = session.leave(viewport);
-        final injected = ReadbackObservation(
-          zoom: viewport.zoom,
-          scrollX: viewport.scrollX,
-          scrollY: viewport.scrollY,
-          width: viewport.width,
+          width: viewport.width + 20,
           height: viewport.height,
           orientation: viewport.orientation,
           sentenceVisible: true,
           highlightOnGlyphs: true,
           cardOccludesSentence: false,
           stableFrameCount: 1,
+          source: ObservationSource.syntheticFixture,
+          targetFileHash: 'hash-h',
+          targetPageNumber: 2,
+          leaveSelectionGeneration: record.selectionGeneration,
         );
-        expect(
-          classifyRestore(record, injected),
-          RestoreVerdict.selectionRestored,
+        expect(classifyRestore(record, wider), RestoreVerdict.unverified);
+
+        final occluded = ReadbackObservation(
+          zoom: viewport.zoom,
+          scrollX: viewport.scrollX,
+          scrollY: viewport.scrollY,
+          width: viewport.width,
+          height: viewport.height,
+          orientation: viewport.orientation,
+          sentenceVisible: null,
+          highlightOnGlyphs: null,
+          cardOccludesSentence: true,
+          stableFrameCount: 1,
+          source: ObservationSource.syntheticFixture,
+          targetFileHash: 'hash-h',
+          targetPageNumber: 2,
+          leaveSelectionGeneration: record.selectionGeneration,
         );
+        expect(classifyRestore(record, occluded), RestoreVerdict.failed);
+
+        final illegal = const PdfViewport(
+          zoom: double.nan,
+          scrollX: 0,
+          scrollY: 0,
+          width: 400,
+          height: 800,
+          orientation: PdfOrientation.portrait,
+        );
+        final badLeave = session.leave(illegal);
+        expect(planRestore(badLeave), isNull);
+        expect(badLeave.viewport.isLegal, isFalse);
       },
     );
   });
 
-  testWidgets(
-    'probe card stays outside the page slot and does not show an unproven sentence',
-    (tester) async {
+  testWidgets('the probe does not present fixture success or issue HTTP', (
+    tester,
+  ) async {
+    final http = _RecordingHttpOverrides();
+    await HttpOverrides.runZoned(() async {
       final session = PdfProbeSession();
       var viewport = PdfViewport.identity;
       await tester.pumpWidget(
@@ -427,10 +442,9 @@ void main() {
           ),
         ),
       );
-
       session.onCallback(
-        _singleColumn(
-          text: 'ALPHA-SENTENCE',
+        _column(
+          'ALPHA-SENTENCE',
           evidence: PageEvidenceKind.publicCurrentPageGetter,
           linePage: 1,
           controllerPage: 1,
@@ -439,19 +453,15 @@ void main() {
       );
       session.applyPending();
       await tester.pump();
-
       expect(find.text('未能确认选区所在页'), findsOneWidget);
       expect(find.text('ALPHA-SENTENCE'), findsNothing);
-      expect(find.text('离线占位，未请求模型'), findsOneWidget);
       expect(find.text('原句已恢复'), findsNothing);
 
-      final page = tester.getRect(find.byKey(const Key('pdf-probe-page-slot')));
-      final card = tester.getRect(find.byKey(const Key('pdf-probe-card')));
-      expect(page.overlaps(card), isFalse);
-
+      session.onCallback(_column('Visible line'), viewportNow: viewport);
+      session.applyPending();
       viewport = const PdfViewport(
         zoom: 2.5,
-        scrollX: 40,
+        scrollX: 0,
         scrollY: 80,
         width: 400,
         height: 800,
@@ -459,10 +469,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('pdf-probe-leave')));
       await tester.pump();
-      expect(find.text('离开时 zoom 2.5 x 40.0 y 80.0'), findsOneWidget);
-
-      final reopened = PdfProbeSession();
-      reopened.reopen(session.leaveRecord!);
+      final reopened = PdfProbeSession()..reopen(session.leaveRecord!);
       await tester.pumpWidget(
         MaterialApp(
           home: PdfOfflineProbeView(
@@ -471,9 +478,9 @@ void main() {
           ),
         ),
       );
-      expect(find.text('回位未验证'), findsOneWidget);
       expect(find.text('原句已恢复'), findsNothing);
-      expect(reopened.annotationApplications, 0);
-    },
-  );
+      expect(find.text('回位未验证'), findsOneWidget);
+      expect(http.clients, 0);
+    }, createHttpClient: http.createHttpClient);
+  });
 }

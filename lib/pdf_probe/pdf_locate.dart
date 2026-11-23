@@ -22,15 +22,26 @@ LocateDecision locateSelection(PdfSelectionSnapshot snapshot) {
   if (lines.any((line) => line.pageSize == null)) {
     return const LocateRejected(LocateFailure.pageSizeUnavailable);
   }
-  if (lines.any((line) => !_insidePage(line.bounds, line.pageSize!))) {
+  if (lines.any((line) => !_usablePageSize(line.pageSize!))) {
+    return const LocateRejected(LocateFailure.badBounds);
+  }
+  final pageSize = lines.first.pageSize!;
+  if (lines.any((line) => line.pageSize != pageSize)) {
+    return const LocateRejected(LocateFailure.pageSizeInconsistent);
+  }
+  if (lines.any((line) => !_insidePage(line.bounds, pageSize))) {
     return const LocateRejected(LocateFailure.boundsOutsidePage);
   }
   if (_orderUnproven(lines)) {
     return const LocateRejected(LocateFailure.orderAmbiguous);
   }
-  final callback = snapshot.selectedText;
-  if (callback == null ||
-      !selectionTextsEqual(callback, lines.map((line) => line.text))) {
+  final callback = snapshot.selectedText ?? '';
+  final joined = joinCapturedLines(lines.map((line) => line.text));
+  if (normalizeSelectionText(callback).isEmpty ||
+      normalizeSelectionText(joined).isEmpty) {
+    return const LocateRejected(LocateFailure.emptyLineText);
+  }
+  if (!selectionTextsEqual(callback, lines.map((line) => line.text))) {
     return const LocateRejected(LocateFailure.textMismatch);
   }
   if (snapshot.evidence != PageEvidenceKind.externalFixture) {
@@ -45,6 +56,7 @@ LocateDecision locateSelection(PdfSelectionSnapshot snapshot) {
       fileHash: hash,
       pageNumber: page,
       lines: List<PdfLineSnapshot>.unmodifiable(lines),
+      evidence: snapshot.evidence,
     ),
   );
 }
@@ -58,23 +70,35 @@ bool _finitePositive(Rect bounds) {
       bounds.height > 0;
 }
 
+bool _usablePageSize(Size pageSize) {
+  return pageSize.width.isFinite &&
+      pageSize.height.isFinite &&
+      pageSize.width > 0 &&
+      pageSize.height > 0;
+}
+
 bool _insidePage(Rect bounds, Size pageSize) {
-  if (!(pageSize.width > 0) || !(pageSize.height > 0)) return false;
   return bounds.left >= 0 &&
       bounds.top >= 0 &&
       bounds.right <= pageSize.width &&
       bounds.bottom <= pageSize.height;
 }
 
-/// Overlapping boxes, or horizontally disjoint boxes, do not have a reading
-/// order this probe can prove. The check does not reorder lines and is not a
-/// column detector.
+/// Order this probe will accept, and only inside that boundary.
+///
+/// For unrotated horizontal text in top-origin page coordinates, capture
+/// order must run downward: an earlier box cannot sit below a later one.
+/// Overlap and horizontally disjoint boxes are also rejected. Nothing here
+/// reorders lines or claims a multi-column reading order.
 bool _orderUnproven(List<PdfLineSnapshot> lines) {
   for (var i = 0; i < lines.length; i += 1) {
     for (var j = i + 1; j < lines.length; j += 1) {
       final a = lines[i].bounds;
       final b = lines[j].bounds;
-      if (_positiveIntersection(a, b) || _horizontallyDisjoint(a, b)) {
+      final reversed = a.bottom > b.top;
+      if (_positiveIntersection(a, b) ||
+          _horizontallyDisjoint(a, b) ||
+          reversed) {
         return true;
       }
     }
