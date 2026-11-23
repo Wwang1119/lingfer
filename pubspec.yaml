@@ -82,6 +82,7 @@ flutter:
     - assets/books/wo_zhe_yi_bei_zi.epub
     - assets/books/cha_guan.epub
     - assets/books/sample_paper.pdf
+    - assets/probe/synthetic_probe.pdf
     - assets/covers/
     - assets/branding/
 
